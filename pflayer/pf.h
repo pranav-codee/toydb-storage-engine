@@ -41,3 +41,60 @@
 extern int PFerrno;		/* error number of last error */
 extern void PF_Init();
 extern void PF_PrintError();
+
+/* CHANGED [P3-P6]: interface frozen in commit #5, implemented in commits #6-#9 */
+#ifndef PF_FROZEN_INTERFACE_H
+#define PF_FROZEN_INTERFACE_H
+
+#include <stdio.h>
+
+#define PF_LRU 0
+#define PF_MRU 1
+
+typedef struct {
+	long logical_reads;
+	long logical_writes;
+	long hits;
+	long misses;
+	long physical_reads;
+	long physical_writes;
+	long evictions;
+	long dirty_evictions;
+} PFstats;
+
+/*
+ * Open fname with the requested replacement policy.  PF_OpenFile remains
+ * available and uses the default policy.
+ */
+int PF_OpenFileEx(char *fname, int policy);
+
+/*
+ * Mark pageNum dirty without changing its recency.  Return PFE_OK or a PF
+ * error code.
+ */
+int PF_MarkDirty(int fd, int pageNum);
+
+/*
+ * Copy statistics for fd into out.  fd == -1 requests totals over all open
+ * files.  Return PFE_OK or a PF error code.
+ */
+int PF_GetStats(int fd, PFstats *out);
+
+/*
+ * Reset statistics for fd.  fd == -1 resets totals for all open files.
+ */
+void PF_ResetStats(int fd);
+
+/*
+ * Print statistics for fd to out.  fd == -1 prints totals over all open
+ * files.
+ */
+void PF_PrintStats(int fd, FILE *out);
+
+/*
+ * Flush all dirty pages from every open file.  Return PFE_OK or a PF error
+ * code.
+ */
+int PF_FlushAll(void);
+
+#endif /* PF_FROZEN_INTERFACE_H */
