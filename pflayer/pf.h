@@ -32,7 +32,10 @@
 
 
 /* page size */
+/* CHANGED [B2]: allow compile-time page-size overrides for shared PF/AM builds. */
+#ifndef PF_PAGE_SIZE
 #define PF_PAGE_SIZE	4096
+#endif
 
 /* externs from the PF layer */
 extern int PFerrno;		/* error number of last error */

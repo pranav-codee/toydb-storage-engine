@@ -5,10 +5,8 @@
 #   make test       runs them in a scratch dir and checks each one finished
 #   make clean      removes build outputs and stray test files
 #
-# Each provided .c is compiled from its own directory, so #include "pf.h"
-# picks up the pf.h next to the source file (amlayer has its own copy until
-# B2). The provided code gets no -I flags. New code (common/, tests/) is built
-# with warnings on (NEWFLAGS) and -Icommon, and must compile without warnings.
+# Each .c is compiled from its own directory; AM sources resolve #include
+# "pf.h" through the shared pflayer header include path.
 
 CC     = gcc
 CFLAGS = -std=gnu89 -g -O2 -w
@@ -24,7 +22,7 @@ PF_HDRS = $(PF)/pf.h $(PF)/pftypes.h
 
 AM_OBJS = $(AM)/am.o $(AM)/amfns.o $(AM)/amsearch.o $(AM)/aminsert.o \
 	  $(AM)/amstack.o $(AM)/amglobals.o $(AM)/amscan.o $(AM)/amprint.o
-AM_HDRS = $(AM)/am.h $(AM)/pf.h $(AM)/testam.h
+AM_HDRS = $(AM)/am.h $(PF)/pf.h $(AM)/testam.h
 
 COMMON_OBJS = common/config.o
 COMMON_HDRS = common/config.h
@@ -56,7 +54,7 @@ $(PF)/%.o: $(PF)/%.c $(PF_HDRS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(AM)/%.o: $(AM)/%.c $(AM_HDRS)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -Ipflayer -c $< -o $@
 
 common/%.o: common/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -c $< -o $@
