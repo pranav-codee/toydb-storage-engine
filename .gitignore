@@ -8,6 +8,7 @@ amlayer/test2
 amlayer/test3
 amlayer/amtest
 tests/test_config
+tests/test_pool
 file1
 file2
 testrel.*

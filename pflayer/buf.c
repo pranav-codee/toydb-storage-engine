@@ -9,6 +9,8 @@ static int PFnumbpage = 0;	/* # of buffer pages in memory */
 static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
+/* CHANGED [P1]: all frames come from one malloc'd array of the configured size */
+static PFbpage *PFbufpool = NULL;	/* the frame array, or NULL before PFbufInit */
 
 extern char *malloc();
 
@@ -104,8 +106,8 @@ SPECIFICATIONS:
 
 ALGORITHM:
 	If there is something on the free list, then use it.
-	If free list is empty, and there are less than PF_MAX_BUFS 
-	number of pages allocated, then malloc() one.
+	(CHANGED [P1]: all frames are on the free list after PFbufInit(),
+	so there is no malloc() here any more.)
 	Otherwise, choose a victim to write out, and then use that
 	page as the page to be used.
 	If a victim cannot be chosen (because all the pages are fixed),
@@ -126,24 +128,24 @@ GLOBAL VARIABLES MODIFIED:
 PFbpage *tbpage;	/* temporary pointer to buffer page */
 int error;		/* error value returned*/
 
+	/* CHANGED [P1]: a program that never called PF_Init() (testpf.c)
+	used to get frames malloc'd on demand; give it the old default
+	pool of PF_DEFAULT_BUFS frames the first time a frame is needed */
+	if (PFbufpool == NULL &&
+			(error=PFbufInit(PF_DEFAULT_BUFS)) != PFE_OK){
+		*bpage = NULL;
+		return(error);
+	}
+
 	/* Set *bpage to the buffer page to be returned */
 	if (PFfreebpage != NULL){
 		/* Free list not empty, use the one from the free list. */
 		*bpage = PFfreebpage;
 		PFfreebpage = (*bpage)->nextpage;
 	}
-	else if (PFnumbpage < PF_MAX_BUFS){
-		/* We have not reached max buffer limit, so
-		malloc() a new one */
-		if ((*bpage=(PFbpage *)malloc(sizeof(PFbpage)))==NULL){
-			/* no mem */
-			*bpage = NULL;
-			PFerrno = PFE_NOMEM;
-			return(PFerrno);
-		}
-		/* increment # of pages allocated */
-		PFnumbpage++;
-	}
+	/* CHANGED [P1]: removed the one-frame-at-a-time malloc() branch
+	(PFnumbpage < PF_MAX_BUFS); PFbufInit() puts every frame on the
+	free list up front, so an empty free list means the pool is full */
 	else {
 		/* we have reached max buffer limit */
 		/* choose a victim from the buffer*/
@@ -186,6 +188,58 @@ int error;		/* error value returned*/
 
 
 /************************* Interface to the Outside World ****************/
+
+/* CHANGED [P1]: new function, sets up a pool of n frames at runtime */
+PFbufInit(n)
+int n;		/* number of frames in the pool */
+/****************************************************************************
+SPECIFICATIONS:
+	Allocate a pool of "n" buffer frames with a single malloc() and put
+	them all on the free list. The caller (PF_InitBuffer) checks that
+	n >= PF_MIN_BUFS.
+	Can be called again to resize the pool, but only when no page is
+	in the buffer at all (all files closed). An unfixed page can still
+	be dirty and is still in the hash table, so it is not enough that
+	no page is fixed. On a valid re-init the old pool is freed. If the
+	new malloc() fails the old pool is kept unchanged.
+
+RETURN VALUE:
+	PFE_OK		if ok.
+	PFE_BUFINUSE	if some page is still in the buffer.
+	PFE_NOMEM	if the pool can't be allocated.
+
+GLOBAL VARIABLES MODIFIED:
+	PFbufpool, PFnumbpage, PFfreebpage
+*****************************************************************************/
+{
+PFbpage *newpool;	/* the new frame array */
+int i;
+
+	if (PFfirstbpage != NULL){
+		/* pages are still in the buffer, can't resize */
+		PFerrno = PFE_BUFINUSE;
+		return(PFerrno);
+	}
+
+	if ((newpool=(PFbpage *)malloc((unsigned)n*sizeof(PFbpage)))==NULL){
+		PFerrno = PFE_NOMEM;
+		return(PFerrno);
+	}
+
+	/* the used list is empty, so every old frame is on the free list
+	and nothing points into the old pool any more */
+	if (PFbufpool != NULL)
+		free((char *)PFbufpool);
+	PFbufpool = newpool;
+	PFnumbpage = n;
+
+	/* link all frames into the free list, frame 0 first */
+	PFfreebpage = NULL;
+	for (i = n-1; i >= 0; i--)
+		PFbufInsertFree(&PFbufpool[i]);
+
+	return(PFE_OK);
+}
 
 PFbufGet(fd,pagenum,fpage,readfcn,writefcn)
 int fd;	/* file descriptor */

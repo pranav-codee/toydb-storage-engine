@@ -5,6 +5,7 @@
 #include <sys/file.h>
 #include "pf.h"
 #include "pftypes.h"
+#include "config.h"	/* CHANGED [P1]: PF_Init reads buffer_pool_size */
 
 /* To keep system V and PC users happy */
 #ifndef L_SET
@@ -173,6 +174,13 @@ void PF_Init()
 SPECIFICATIONS:
 	Initialize the PF interface. Must be the first function called
 	in order to use the PF ADT.
+	CHANGED [P1]: also sets up the buffer pool with
+	Config_GetInt("buffer_pool_size", PF_DEFAULT_BUFS) frames. The
+	config is only seen if Config_Init() was called before PF_Init();
+	otherwise the pool has PF_DEFAULT_BUFS frames, as before. If the
+	pool can't be set up (size below PF_MIN_BUFS, or no memory) an
+	error is printed and the program exits, so a bad config never
+	gives results for some other pool size.
 
 AUTHOR: clc
 
@@ -183,6 +191,7 @@ GLOBAL VARIABLES MODIFIED:
 *****************************************************************************/
 {
 int i;
+int nbufs;	/* CHANGED [P1]: configured pool size */
 	/* init the hash table */
 	PFhashInit();
 
@@ -190,6 +199,45 @@ int i;
 	for (i=0; i < PF_FTAB_SIZE; i++){
 		PFftab[i].fname = NULL;
 	}
+
+	/* CHANGED [P1]: size the buffer pool from the config */
+	nbufs = Config_GetInt("buffer_pool_size", PF_DEFAULT_BUFS);
+	if (PF_InitBuffer(nbufs) != PFE_OK){
+		if (PFerrno == PFE_INVALIDBUFS)
+			fprintf(stderr,
+				"toydb: buffer_pool_size=%d is below the minimum of %d\n",
+				nbufs, PF_MIN_BUFS);
+		else {
+			fprintf(stderr, "toydb: buffer_pool_size=%d", nbufs);
+			PF_PrintError("");
+		}
+		exit(1);
+	}
+}
+
+/* CHANGED [P1]: new function, runtime buffer pool size */
+int PF_InitBuffer(nbufs)
+int nbufs;	/* number of buffer frames wanted */
+/****************************************************************************
+SPECIFICATIONS:
+	Set up the buffer pool with "nbufs" frames (one malloc() in
+	PFbufInit). PF_Init() calls this with the configured size; a
+	program can call it again later to resize the pool, but only while
+	no page is in the buffer (all files closed). On any error the old
+	pool is kept.
+
+RETURN VALUE:
+	PFE_OK		if ok
+	PFE_INVALIDBUFS	if nbufs < PF_MIN_BUFS
+	PFE_BUFINUSE	if some page is still in the buffer
+	PFE_NOMEM	if no memory
+*****************************************************************************/
+{
+	if (nbufs < PF_MIN_BUFS){
+		PFerrno = PFE_INVALIDBUFS;
+		return(PFerrno);
+	}
+	return(PFbufInit(nbufs));
 }
 
 PF_CreateFile(fname)
@@ -721,7 +769,10 @@ static char *PFerrormsg[]={
 "page already unfixed",
 "new page to be allocated already in buffer",
 "hash table entry not found",
-"page already in hash table"
+"page already in hash table",
+/* CHANGED [P1]: messages for PFE_INVALIDBUFS and PFE_BUFINUSE */
+"buffer pool size below the minimum",
+"buffer pool in use, can't resize"
 };
 
 void PF_PrintError(s)

@@ -34,7 +34,10 @@ typedef struct PFftab_ele {
 } PFftab_ele;
 
 /************************** Buffer Page Decls *********************/
-#define PF_MAX_BUFS	20	/* max # of buffers */
+/* CHANGED [P1]: the pool size is set at runtime by PF_InitBuffer. PF_MAX_BUFS is
+   kept as the default size because testpf.c uses it (needs pf.h included first,
+   like PF_PAGE_SIZE above) */
+#define PF_MAX_BUFS	PF_DEFAULT_BUFS	/* default # of buffers */
 
 /* buffer page decl */
 typedef struct PFbpage {
@@ -52,7 +55,8 @@ typedef struct PFbpage {
 
 
 /******************** Hash Table Decls ****************************/
-#define PF_HASH_TBL_SIZE	20	/* size of PF hash table */
+/* CHANGED [P2]: 20 -> 1031 (a prime) so big pools don't get long bucket chains */
+#define PF_HASH_TBL_SIZE	1031	/* size of PF hash table */
 
 /* Hash table bucket entries*/
 typedef struct PFhash_entry {
@@ -78,3 +82,4 @@ extern PFbufGet();
 extern PFbufUnfix();
 extern PFbufalloc();
 extern PFbufReleaseFile();
+extern PFbufInit();	/* CHANGED [P1]: allocate the pool of n frames */

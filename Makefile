@@ -5,8 +5,11 @@
 #   make test       runs them in a scratch dir and checks each one finished
 #   make clean      removes build outputs and stray test files
 #
-# Each .c is compiled from its own directory; AM sources resolve #include
-# "pf.h" through the shared pflayer header include path.
+# Each .c is compiled from its own directory. Provided PF code gets no -I
+# flags except -Icommon, for the config.h include in pf.c. AM sources get
+# -Ipflayer, so "pf.h" resolves to the single shared header. New code
+# (common/, tests/) is built with NEWFLAGS and -Icommon and must compile with
+# zero warnings; tests/ also gets -Ipflayer because the PF tests include pf.h.
 
 CC     = gcc
 CFLAGS = -std=gnu89 -g -O2 -w
@@ -28,7 +31,7 @@ COMMON_OBJS = common/config.o
 COMMON_HDRS = common/config.h
 
 AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
-TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config
+TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -44,14 +47,17 @@ STRAY = testrel.* file1 file2
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
-$(PF)/pflayer.o: $(PF_OBJS)
-	$(LD) -r -o $@ $(PF_OBJS)
+# config.o is linked in because PF_Init reads buffer_pool_size (P1)
+$(PF)/pflayer.o: $(PF_OBJS) $(COMMON_OBJS)
+	$(LD) -r -o $@ $(PF_OBJS) $(COMMON_OBJS)
 
 $(AM)/amlayer.o: $(AM_OBJS)
 	$(LD) -r -o $@ $(AM_OBJS)
 
 $(PF)/%.o: $(PF)/%.c $(PF_HDRS)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(NEWINC) -c $< -o $@
+
+$(PF)/pf.o: $(COMMON_HDRS)
 
 $(AM)/%.o: $(AM)/%.c $(AM_HDRS)
 	$(CC) $(CFLAGS) -Ipflayer -c $< -o $@
@@ -60,7 +66,9 @@ common/%.o: common/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -c $< -o $@
 
 tests/%.o: tests/%.c $(COMMON_HDRS)
-	$(CC) $(NEWFLAGS) $(NEWINC) -c $< -o $@
+	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
+
+tests/test_pool.o: $(PF_HDRS)
 
 tests: $(TEST_BINS)
 
@@ -74,6 +82,10 @@ $(PF)/testpf: $(PF)/testpf.o $(PF)/pflayer.o
 	$(CC) $(CFLAGS) -o $@ $^
 
 tests/test_config: tests/test_config.o common/config.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+# test_pool gets config.o through pflayer.o, so it must not be linked twice
+tests/test_pool: tests/test_pool.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 # The provided test mains have no return statement, so exit codes are garbage.
@@ -116,6 +128,7 @@ test: tests
 	check $(AM)/amtest last "test3 done!"; \
 	check $(PF)/testpf line "hash table:"; \
 	check tests/test_config last "test_config done!" "$(CURDIR)/toydb.conf" $(CONF_MODE); \
+	check tests/test_pool last "test_pool done!"; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
