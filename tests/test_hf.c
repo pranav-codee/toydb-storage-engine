@@ -57,6 +57,12 @@ main(int argc, char **argv)
 	int operation;
 	int result;
 	int got_len;
+	int extra_rids[3];
+	int scanfd;
+	int scanfd2;
+	int scan_rid;
+	int scan_count;
+	int expected_rids[43];
 	char got[HF_MAX_RECLEN];
 	unsigned long random_state;
 	struct model_record model[256];
@@ -86,10 +92,12 @@ main(int argc, char **argv)
 	for (i = 0; i < 39; i++)
 		check(rids[i] == HF_RID(1, i), "hand-computed first-page rid");
 	check(rids[39] == HF_RID(2, 0), "hand-computed second-page rid");
-	check(HF_Insert(fd, record, 0) >= 0, "zero-length insert");
-	check(HF_Insert(fd, record, 1) >= 0, "one-byte insert");
-	check(HF_Insert(fd, record, HF_MAX_RECLEN) >= 0,
-	      "maximum-length insert");
+	extra_rids[0] = HF_Insert(fd, record, 0);
+	check(extra_rids[0] >= 0, "zero-length insert");
+	extra_rids[1] = HF_Insert(fd, record, 1);
+	check(extra_rids[1] >= 0, "one-byte insert");
+	extra_rids[2] = HF_Insert(fd, record, HF_MAX_RECLEN);
+	check(extra_rids[2] >= 0, "maximum-length insert");
 	check(HF_Insert(fd, record, HF_MAX_RECLEN + 1) == HFE_TOOLONG,
 	      "record above maximum rejected");
 	check(HF_Get(fd, rids[1], got, &got_len) == HF_OK &&
@@ -111,6 +119,30 @@ main(int argc, char **argv)
 	      "header-page rid is invalid");
 	check(HF_Get(fd, HF_RID(3, 0), got, &got_len) == HFE_NOTFOUND,
 	      "out-of-range page is not found");
+	scanfd = HF_ScanOpen(fd);
+	check(scanfd >= 0, "open scan");
+	scanfd2 = HF_ScanOpen(fd);
+	check(scanfd2 >= 0 && scanfd2 != scanfd, "open independent scan");
+	scan_count = 0;
+	expected_rids[scan_count++] = rids[0];
+	for (i = 1; i < 39; i++)
+		expected_rids[scan_count++] = rids[i];
+	expected_rids[scan_count++] = extra_rids[0];
+	expected_rids[scan_count++] = extra_rids[1];
+	expected_rids[scan_count++] = rids[39];
+	expected_rids[scan_count++] = extra_rids[2];
+	for (i = 0; i < scan_count; i++) {
+		check(HF_ScanNext(scanfd, got, &got_len, &scan_rid) == HF_OK,
+		      "scan returns live record");
+		check(scan_rid == expected_rids[i], "scan RID order");
+	}
+	check(HF_ScanNext(scanfd, got, &got_len, &scan_rid) == HFE_EOF,
+	      "scan reaches EOF");
+	check(HF_ScanNext(scanfd2, got, &got_len, &scan_rid) == HF_OK &&
+	      scan_rid == expected_rids[0], "independent scan position");
+	check(HF_ScanClose(scanfd) == HF_OK, "close scan");
+	check(HF_ScanClose(scanfd) == HFE_INVALID, "double close scan");
+	check(HF_ScanClose(scanfd2) == HF_OK, "close second scan");
 	check(HF_CloseFile(fd) == HF_OK, "close after reopen");
 
 	model_name = "test_hf_model.pf";
@@ -165,6 +197,18 @@ main(int argc, char **argv)
 	}
 	check(HF_CloseFile(fd) == HF_OK, "close model file");
 	check(PF_DestroyFile(model_name) == PFE_OK, "destroy model file");
+
+	check(HF_CreateFile("test_hf_empty.pf") == HF_OK, "create empty file");
+	fd = HF_OpenFile("test_hf_empty.pf");
+	check(fd >= 0, "open empty file");
+	scanfd = HF_ScanOpen(fd);
+	check(scanfd >= 0, "open empty scan");
+	check(HF_ScanNext(scanfd, got, &got_len, &scan_rid) == HFE_EOF,
+	      "empty scan reaches EOF immediately");
+	check(HF_ScanClose(scanfd) == HF_OK, "close empty scan");
+	check(HF_CloseFile(fd) == HF_OK, "close empty file after scan");
+	check(PF_DestroyFile("test_hf_empty.pf") == PFE_OK,
+	      "destroy empty file");
 
 	fd = HF_OpenFile(fname);
 	check(fd >= 0, "reopen after inserts");

@@ -8,6 +8,7 @@
 #define HF_FILE_VERSION 1UL
 #define HF_FILE_HEADER_SIZE 16
 #define HF_MAX_OPEN_FILES 64
+#define HF_MAX_SCANS      128
 
 /*
  * The first heap page is metadata, not a record page.  Fields are stored as

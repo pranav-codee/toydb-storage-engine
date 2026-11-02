@@ -15,6 +15,14 @@ extern int PF_UnfixPage(int fd, int pagenum, int dirty);
 
 static int hf_open_fds[HF_MAX_OPEN_FILES];
 static int hf_open_count;
+struct hf_scan {
+	int fd;
+	long data_pages;
+	int page;
+	int slot;
+	int used;
+};
+static struct hf_scan hf_scans[HF_MAX_SCANS];
 
 static unsigned long
 hf_get_u32(const char *p)
@@ -363,5 +371,88 @@ HF_Delete(int fd, int rid)
 	HFInternal_WriteHeader(header_page, data_pages, records - 1);
 	if (PF_UnfixPage(fd, 0, TRUE) != PFE_OK)
 		return HFE_PF;
+	return HF_OK;
+}
+
+int
+HF_ScanOpen(int fd)
+{
+	char *header_page;
+	long data_pages;
+	long records;
+	int error;
+	int i;
+
+	if (hf_find_fd(fd) < 0)
+		return HFE_INVALID;
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	error = HFInternal_ReadHeader(header_page, &data_pages, &records);
+	if (PF_UnfixPage(fd, 0, FALSE) != PFE_OK)
+		return HFE_PF;
+	if (error != HF_OK)
+		return HFE_PF;
+	for (i = 0; i < HF_MAX_SCANS; i++) {
+		if (!hf_scans[i].used) {
+			hf_scans[i].used = 1;
+			hf_scans[i].fd = fd;
+			hf_scans[i].data_pages = data_pages;
+			hf_scans[i].page = 1;
+			hf_scans[i].slot = 0;
+			return i;
+		}
+	}
+	return HFE_NOMEM;
+}
+
+int
+HF_ScanNext(int scanfd, char *buf, int *len, int *rid)
+{
+	struct hf_scan *scan;
+	char *data_page;
+	int error;
+	int result;
+
+	if (scanfd < 0 || scanfd >= HF_MAX_SCANS || !hf_scans[scanfd].used ||
+	    buf == NULL || len == NULL || rid == NULL)
+		return HFE_INVALID;
+	scan = &hf_scans[scanfd];
+	if (hf_find_fd(scan->fd) < 0)
+		return HFE_INVALID;
+	while (scan->page <= scan->data_pages) {
+		error = PF_GetThisPage(scan->fd, scan->page, &data_page);
+		if (error != PFE_OK)
+			return HFE_PF;
+		while (scan->slot < HF_RID_STRIDE) {
+			result = HFPage_Read((unsigned char *)data_page, scan->slot,
+					     buf, len);
+			*rid = HF_RID(scan->page, scan->slot);
+			scan->slot++;
+			if (result == HF_OK) {
+				if (PF_UnfixPage(scan->fd, scan->page, FALSE) != PFE_OK)
+					return HFE_PF;
+				return HF_OK;
+			}
+			if (result == HFE_INVALID) {
+				if (PF_UnfixPage(scan->fd, scan->page, FALSE) != PFE_OK)
+					return HFE_PF;
+				return HFE_PF;
+			}
+		}
+		if (PF_UnfixPage(scan->fd, scan->page, FALSE) != PFE_OK)
+			return HFE_PF;
+		scan->page++;
+		scan->slot = 0;
+	}
+	return HFE_EOF;
+}
+
+int
+HF_ScanClose(int scanfd)
+{
+	if (scanfd < 0 || scanfd >= HF_MAX_SCANS || !hf_scans[scanfd].used)
+		return HFE_INVALID;
+	hf_scans[scanfd].used = 0;
 	return HF_OK;
 }
