@@ -93,9 +93,12 @@ GLOBAL VARIABLES MODIFIED:
 }
 
 
-static PFbufInternalAlloc(bpage,writefcn)
+/* CHANGED [P3]: new "policy" argument, the policy of the file the incoming
+   page belongs to */
+static PFbufInternalAlloc(bpage,writefcn,policy)
 PFbpage **bpage;	/* pointer to pointer to buffer bpage to be allocated*/
 int (*writefcn)();
+int policy;		/* PF_LRU or PF_MRU */
 /****************************************************************************
 SPECIFICATIONS:
 	Allocate a buffer page and set *bpage to point to it. *bpage
@@ -110,6 +113,16 @@ ALGORITHM:
 	so there is no malloc() here any more.)
 	Otherwise, choose a victim to write out, and then use that
 	page as the page to be used.
+	CHANGED [P3]: the victim depends on "policy" (the incoming page's
+	file), and it can be a page of any file since the pool is shared:
+		PF_LRU: walk from the tail, take the first unfixed page
+			(least recently used, the old code).
+		PF_MRU: walk from the head, take the first unfixed page
+			(most recently used).
+	The head is the page most recently brought in or unfixed.
+	A dirty victim is written with writefcn(victim fd, victim page),
+	so with PFwritefcn it goes to the victim's own file even when the
+	victim belongs to another file.
 	If a victim cannot be chosen (because all the pages are fixed),
 	then return error.
 
@@ -152,10 +165,21 @@ int error;		/* error value returned*/
 
 		*bpage = NULL;		/* set initial return value */
 
+		/* CHANGED [P3]: MRU searches from the head, LRU from the tail */
+		if (policy == PF_MRU){
+			for (tbpage=PFfirstbpage;tbpage!=NULL;
+					tbpage=tbpage->nextpage){
+				if (!tbpage->fixed)
+					/* found a page that can be swapped out */
+					break;
+			}
+		}
+		else {
 		for (tbpage=PFlastbpage;tbpage!=NULL;tbpage=tbpage->prevpage){
 			if (!tbpage->fixed)
 				/* found a page that can be swapped out */
 				break;
+		}
 		}
 
 		if (tbpage == NULL){
@@ -281,7 +305,9 @@ int error;
 		/* page not in buffer. */
 		
 		/* allocate an empty page */
-		if ((error=PFbufInternalAlloc(&bpage,writefcn))!= PFE_OK){
+		/* CHANGED [P3]: victim chosen by the policy of file fd */
+		if ((error=PFbufInternalAlloc(&bpage,writefcn,
+				PFftabGetPolicy(fd)))!= PFE_OK){
 			/* error */
 			*fpage = NULL;
 			return(error);
@@ -402,7 +428,9 @@ int error;
 		return(PFerrno);
 	}
 
-	if ((error=PFbufInternalAlloc(&bpage,writefcn))!= PFE_OK)
+	/* CHANGED [P3]: victim chosen by the policy of file fd */
+	if ((error=PFbufInternalAlloc(&bpage,writefcn,
+			PFftabGetPolicy(fd)))!= PFE_OK)
 		/* can't get any buffer */
 		return(error);
 	
@@ -524,6 +552,24 @@ PFbpage *bpage;	/* pointer to the bpage we are looking for */
 	PFbufLinkHead(bpage);
 
 	return(PFE_OK);
+}
+
+/* CHANGED [P3]: new debug helper for tests/test_policy.c, not in pf.h */
+PFbufResident(fd,pagenum)
+int fd;		/* file descriptor */
+int pagenum;	/* page number */
+/****************************************************************************
+SPECIFICATIONS:
+	Tell whether page "pagenum" of file "fd" is in the buffer pool
+	right now. Only a hash table lookup: nothing is fixed, read or
+	moved, so the recency order is not changed. Debug helper, not part
+	of the public interface.
+
+RETURN VALUE:
+	1 if the page is in the buffer, 0 if not.
+*****************************************************************************/
+{
+	return(PFhashFind(fd,pagenum) != NULL);
 }
 
 void PFbufPrint()

@@ -33,6 +33,8 @@
 /* CHANGED [P1]: error codes for the runtime buffer pool size (PF_InitBuffer) */
 #define PFE_INVALIDBUFS	-20	/* buffer pool size below PF_MIN_BUFS */
 #define PFE_BUFINUSE	-21	/* pool can't be resized while pages are in it */
+/* CHANGED [P3]: error code for PF_OpenFileEx with a policy other than PF_LRU/PF_MRU */
+#define PFE_INVALIDPOLICY -22	/* invalid replacement policy */
 
 /* buffer pool size */
 /* CHANGED [P1]: pool size is chosen at runtime, these are the default and the minimum */

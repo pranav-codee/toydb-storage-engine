@@ -6,6 +6,7 @@
 #include "pf.h"
 #include "pftypes.h"
 #include "config.h"	/* CHANGED [P1]: PF_Init reads buffer_pool_size */
+#include <strings.h>	/* CHANGED [P4]: strcasecmp for default_policy */
 
 /* To keep system V and PC users happy */
 #ifndef L_SET
@@ -15,6 +16,11 @@
 int PFerrno = PFE_OK;	/* last error message */
 
 static PFftab_ele PFftab[PF_FTAB_SIZE]; /* table of opened files */
+
+/* CHANGED [P4]: policy PF_OpenFile uses. PF_Init sets it from
+   default_policy in the config; it starts as LRU so a program that never
+   calls PF_Init (testpf.c) behaves as before */
+static int PFdefaultPolicy = PF_LRU;
 
 /* true if file descriptor fd is invaild */
 #define PFinvalidFd(fd) ((fd) < 0 || (fd) >= PF_FTAB_SIZE \
@@ -181,6 +187,11 @@ SPECIFICATIONS:
 	pool can't be set up (size below PF_MIN_BUFS, or no memory) an
 	error is printed and the program exits, so a bad config never
 	gives results for some other pool size.
+	CHANGED [P4]: also reads Config_GetStr("default_policy", "LRU")
+	once, the policy PF_OpenFile() uses from then on. "LRU" and "MRU"
+	are accepted in any case; any other value prints an error and the
+	program exits, like a bad pool size. With no config loaded the
+	default is LRU, as before.
 
 AUTHOR: clc
 
@@ -192,6 +203,7 @@ GLOBAL VARIABLES MODIFIED:
 {
 int i;
 int nbufs;	/* CHANGED [P1]: configured pool size */
+const char *pol;	/* CHANGED [P4]: configured default policy */
 	/* init the hash table */
 	PFhashInit();
 
@@ -211,6 +223,18 @@ int nbufs;	/* CHANGED [P1]: configured pool size */
 			fprintf(stderr, "toydb: buffer_pool_size=%d", nbufs);
 			PF_PrintError("");
 		}
+		exit(1);
+	}
+
+	/* CHANGED [P4]: default replacement policy for PF_OpenFile */
+	pol = Config_GetStr("default_policy", "LRU");
+	if (strcasecmp(pol, "LRU") == 0)
+		PFdefaultPolicy = PF_LRU;
+	else if (strcasecmp(pol, "MRU") == 0)
+		PFdefaultPolicy = PF_MRU;
+	else {
+		fprintf(stderr, "toydb: default_policy=%s must be LRU or MRU\n",
+			pol);
 		exit(1);
 	}
 }
@@ -321,10 +345,29 @@ int error;
 }
 
 
-PF_OpenFile(fname)
+/* CHANGED [P3]: was PF_OpenFile; the same code, plus a replacement policy */
+PF_OpenFileEx(fname,policy)
 char *fname;		/* name of the file to open */
+int policy;		/* PF_LRU or PF_MRU */
 /****************************************************************************
 SPECIFICATIONS:
+	CHANGED [P3]: like PF_OpenFile, but the file gets its own
+	replacement policy, "policy" (PF_LRU or PF_MRU), kept in its file
+	table entry.
+	The buffer pool is global and shared by all open files. When a
+	page has to be brought in and the pool is full, the policy of the
+	file the INCOMING page belongs to picks the victim, and the victim
+	can be a page of any file:
+		PF_LRU: the unfixed page nearest the tail of the used list
+			(least recently used, the old behaviour).
+		PF_MRU: the first unfixed page from the head (most recently
+			used).
+	A page goes to the head of the used list when it is brought into
+	the buffer and every time it is unfixed. Fixing a page that is
+	already in the buffer does not move it. Fixed pages are never
+	victims; if every page is fixed the fix fails with PFE_NOBUF.
+
+	Old spec of PF_OpenFile:
 	Open the paged file whose name is fname.  It is possible to open
 	a file more than once. Warning: Openinging a file more than once for 
 	write operations is not prevented. The possible consequence is
@@ -336,6 +379,7 @@ AUTHOR: clc
 
 RETURN VALUE:
 	The file descriptor, which is >= 0, if no error.
+	PFE_INVALIDPOLICY if policy is not PF_LRU or PF_MRU (CHANGED [P3]).
 	PF error codes otherwise.
 
 IMPLEMENTATION NOTES:
@@ -345,6 +389,12 @@ IMPLEMENTATION NOTES:
 {
 int count;	/* # of bytes in read */
 int fd; /* file descriptor */
+
+	/* CHANGED [P3]: check the policy before taking a table entry */
+	if (policy != PF_LRU && policy != PF_MRU){
+		PFerrno = PFE_INVALIDPOLICY;
+		return(PFerrno);
+	}
 
 	/* find a free entry in the file table */
 	if ((fd=PFftabFindFree())< 0){
@@ -374,6 +424,9 @@ int fd; /* file descriptor */
 	/* set file header to be not changed */
 	PFftab[fd].hdrchanged = FALSE;
 
+	/* CHANGED [P3]: remember the replacement policy of this file */
+	PFftab[fd].policy = policy;
+
 	/* save the file name */
 	if ((PFftab[fd].fname = savestr(fname)) == NULL){
 		/* no memory */
@@ -383,6 +436,41 @@ int fd; /* file descriptor */
 	}
 
 	return(fd);
+}
+
+/* CHANGED [P4]: PF_OpenFile is now a wrapper, so the AM layer and the
+   provided tests need no edits */
+PF_OpenFile(fname)
+char *fname;		/* name of the file to open */
+/****************************************************************************
+SPECIFICATIONS:
+	Open the paged file "fname" with the default replacement policy
+	(default_policy in the config, read by PF_Init; LRU if none).
+	See PF_OpenFileEx().
+
+RETURN VALUE:
+	Same as PF_OpenFileEx().
+*****************************************************************************/
+{
+	return(PF_OpenFileEx(fname, PFdefaultPolicy));
+}
+
+/* CHANGED [P3]: new internal function, used by buf.c to pick a victim */
+PFftabGetPolicy(fd)
+int fd;		/* file descriptor */
+/****************************************************************************
+SPECIFICATIONS:
+	Return the replacement policy of the open file "fd". The callers
+	in buf.c only get fds that pf.c has already checked; for an invalid
+	fd PF_LRU (the old behaviour) is returned.
+
+RETURN VALUE:
+	PF_LRU or PF_MRU.
+*****************************************************************************/
+{
+	if (PFinvalidFd(fd))
+		return(PF_LRU);
+	return(PFftab[fd].policy);
 }
 
 PF_CloseFile(fd)
@@ -772,7 +860,9 @@ static char *PFerrormsg[]={
 "page already in hash table",
 /* CHANGED [P1]: messages for PFE_INVALIDBUFS and PFE_BUFINUSE */
 "buffer pool size below the minimum",
-"buffer pool in use, can't resize"
+"buffer pool in use, can't resize",
+/* CHANGED [P3]: message for PFE_INVALIDPOLICY */
+"invalid replacement policy"
 };
 
 void PF_PrintError(s)

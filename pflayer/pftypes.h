@@ -31,7 +31,13 @@ typedef struct PFftab_ele {
 	int unixfd;	/* unix file descriptor*/
 	PFhdr_str hdr;	/* file header */
 	short hdrchanged; /* TRUE if file header has changed */
+	/* CHANGED [P3]: replacement policy chosen at open time */
+	int policy;	/* PF_LRU or PF_MRU, see PF_OpenFileEx() */
 } PFftab_ele;
+
+/* CHANGED [P3]: buf.c asks pf.c for the policy of a file through this,
+   since PFftab is static in pf.c */
+extern PFftabGetPolicy();
 
 /************************** Buffer Page Decls *********************/
 /* CHANGED [P1]: the pool size is set at runtime by PF_InitBuffer. PF_MAX_BUFS is

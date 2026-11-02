@@ -9,6 +9,7 @@ amlayer/test3
 amlayer/amtest
 tests/test_config
 tests/test_pool
+tests/test_policy
 file1
 file2
 testrel.*
