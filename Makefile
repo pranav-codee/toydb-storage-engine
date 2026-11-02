@@ -35,7 +35,7 @@ COMMON_HDRS = common/config.h
 AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
-	    tests/test_hfpage
+	    tests/test_hfpage tests/test_hf
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -78,10 +78,15 @@ common/%.o: common/%.c $(COMMON_HDRS)
 hf/hfpage.o: hf/hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
+hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
 tests/%.o: tests/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
 
 tests/test_hfpage.o: tests/test_hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+tests/test_hf.o: tests/test_hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
@@ -121,6 +126,9 @@ tests/test_workload: tests/test_workload.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_hfpage: tests/test_hfpage.o hf/hfpage.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+tests/test_hf: tests/test_hf.o hf/hf.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
@@ -172,6 +180,7 @@ test: tests
 	check tests/test_stats last "test_stats done!"; \
 	check tests/test_workload last "test_workload done!"; \
 	check tests/test_hfpage last "test_hfpage done!"; \
+	check tests/test_hf last "test_hf done!"; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
