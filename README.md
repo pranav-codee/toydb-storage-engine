@@ -52,6 +52,68 @@ The layer keeps eight counters per open file and a global total, read with
 - `evictions`: frames taken from a resident page to make room, clean or dirty.
 - `dirty_evictions`: evictions whose victim was dirty and had to be written back.
 
+## Buffer benchmark
+
+`make bench` runs `bench/bench_buffer` and writes `results/bench_buffer.csv`.
+It builds one scratch file of `buf_file_pages` pages in `work_dir` (a relative
+path is resolved against the repo root). Then, for every pool size in
+`buf_pool_sizes`, policy (LRU, MRU), pattern in `buf_patterns`, read
+percentage in `buf_read_pcts`, and each of `repeats` repeats, it opens the
+file with a cold pool and runs `buf_queries` operations. An operation fixes a
+page and unfixes it. A read unfixes it clean. A write changes one byte and
+marks the page dirty, either with `PF_UnfixPage(..., TRUE)` or with
+`PF_MarkDirty` followed by a clean unfix (the two forms alternate). The
+patterns are `uniform` (random page), `hotcold` (`hot_prob` of the accesses go
+to the first `hot_fraction` of the pages) and `sequential` (a looping scan over
+all pages). Each run uses two fixed xorshift generators. The page stream is
+seeded from `seed`, the repeat and the pattern. The read/write choice comes
+from a second generator that is also seeded with the read percentage. So
+every read percentage, policy and pool size sees the same page sequence on
+every machine. Replacement ignores the dirty bit, so hits, misses, physical
+reads and evictions do not change with the read percentage; only the write
+counters do.
+
+Each run is one CSV line:
+`policy,pattern,pool,read_pct,repeat,ops,logical_reads,logical_writes,hits,misses,physical_reads,physical_writes,total_physical_writes,evictions,dirty_evictions,hit_ratio,ms`.
+The counters are read right after the operations, so `physical_writes` covers
+only dirty evictions. The program then calls `PF_FlushAll`, and
+`total_physical_writes` is the write count after that flush, i.e. dirty
+evictions plus the final write-back. `hit_ratio` is `hits / logical_reads`.
+`ms` is the wall time of the operations only, without the flush.
+
+`bench/bench_buffer check` is the fast self-test run by `make test`. On a
+10-page file it checks that `hits + misses = logical_reads = ops`. It checks
+that a pool larger than the file has exactly one miss per page and no
+evictions, and that a read-only run writes nothing. It checks the
+hand-computed counts for a looping scan with an 8-frame pool (LRU 0 hits,
+MRU 16 hits out of 30), and that the same seed gives the same counters. A
+write-only run must have only dirty evictions and
+`total_physical_writes = dirty_evictions + pages still dirty at the end`,
+and every written byte must be read back from disk after the file is closed.
+Finally, an all-read and an all-write run over the same page stream must give
+the same hits, misses, physical reads and evictions.
+
+## Buffer plots
+
+`make plots` runs `scripts/plot_buffer.py` (Python 3 and matplotlib) on
+`results/bench_buffer.csv` and writes these files to `results/`, each figure
+as PDF and as 150 dpi PNG. Points are means over the repeats, with min/max
+error bars.
+
+- `buffer_hit_ratio`: hit ratio vs pool size, one panel per pattern, all reads.
+- `buffer_io_vs_mix`: disk I/O per operation,
+  `(physical_reads + total_physical_writes) / ops`, vs read percentage, at
+  pool `plot_pool`.
+- `buffer_io_breakdown`: the same disk I/O split into physical reads per
+  operation (solid lines) and total physical writes per operation (dotted
+  lines) vs read percentage, at the same pool.
+- `buffer_summary.csv` and `buffer_summary.tex` (a booktabs tabular): hit
+  ratio, physical reads, total physical writes, evictions and dirty evictions
+  per pattern and policy, at pool `plot_pool` and `plot_read_pct` reads.
+
+`plot_pool` and `plot_read_pct` are in `toydb.conf`. Run the script directly
+with `--pool N` to plot another pool size.
+
 # Part 2 slotted pages
 
 ## Slotted pages

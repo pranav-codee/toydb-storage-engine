@@ -5,6 +5,10 @@
 #   make test       runs them in a scratch dir and checks each one finished
 #   make stress     builds tests/stress_pool and runs it for STRESS_SEEDS
 #                   (slow, not part of make test)
+#   make bench      runs the buffer manager benchmark (bench/bench_buffer)
+#                   with toydb.conf into results/bench_buffer.csv
+#   make plots      figures and summary table from results/bench_buffer.csv
+#                   (python3 + matplotlib, run make bench first)
 #   make clean      removes build outputs and stray test files
 #
 # Each .c is compiled from its own directory. Provided PF code gets no -I
@@ -35,7 +39,7 @@ COMMON_HDRS = common/config.h
 AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
-	    tests/test_hfpage tests/test_hf tests/test_hf_load
+	    tests/test_hfpage tests/test_hf tests/test_hf_load bench/bench_buffer
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -53,7 +57,7 @@ STRESS_BIN     = tests/stress_pool
 STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
 STRESS_TIMEOUT = 600
 
-.PHONY: all tests test stress clean
+.PHONY: all tests test stress bench plots clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -97,6 +101,9 @@ tests/test_stats.o: $(PF_HDRS)
 tests/test_workload.o: $(PF_HDRS)
 tests/stress_pool.o: $(PF_HDRS)
 
+bench/bench_buffer.o: bench/bench_buffer.c $(COMMON_HDRS) $(PF_HDRS)
+	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
+
 tests: $(TEST_BINS)
 
 $(AM_TESTS): %: %.o $(AM)/misc.o $(AM)/amlayer.o $(PF)/pflayer.o
@@ -137,6 +144,10 @@ tests/test_hf_load: tests/test_hf_load.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+# config.o comes in through pflayer.o, like test_pool
+bench/bench_buffer: bench/bench_buffer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 # The provided test mains have no return statement, so exit codes are garbage.
@@ -192,6 +203,7 @@ test: tests
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
+	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
@@ -219,7 +231,32 @@ stress: $(STRESS_BIN)
 	rm -rf "$$dir"; \
 	echo "make stress: all passed"
 
+# Full buffer benchmark. The CSV goes to results/ in the repo, the scratch
+# paged file to work_dir from toydb.conf (relative paths from TOYDB_ROOT).
+# The CSV is written to a temp name first, so a failed run leaves no
+# half-written results file behind.
+BENCH_CSV = results/bench_buffer.csv
+
+bench: bench/bench_buffer
+	@mkdir -p results; start=`date +%s`; \
+	TOYDB_ROOT="$(CURDIR)" bench/bench_buffer "conf=$(CURDIR)/toydb.conf" \
+		> $(BENCH_CSV).tmp || { rm -f $(BENCH_CSV).tmp; \
+		echo "make bench: FAILED"; exit 1; }; \
+	mv $(BENCH_CSV).tmp $(BENCH_CSV); end=`date +%s`; \
+	echo "make bench: $(BENCH_CSV), `wc -l < $(BENCH_CSV)` lines," \
+		"`expr $$end - $$start`s"
+
+# Figures (PDF + PNG) and the summary table into results/, from the CSV of
+# make bench. Not part of make test.
+plots:
+	@if [ ! -f $(BENCH_CSV) ]; then \
+		echo "make plots: $(BENCH_CSV) missing, run make bench first"; \
+		exit 1; \
+	fi; \
+	python3 scripts/plot_buffer.py $(BENCH_CSV) results \
+		--conf "$(CURDIR)/toydb.conf"
+
 clean:
-	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
+	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o bench/*.o $(TEST_BINS) $(STRESS_BIN) \
 		$(PF)/testhash a.out $(AM)/a.out
 	rm -f $(STRAY) $(addprefix $(PF)/,$(STRAY)) $(addprefix $(AM)/,$(STRAY))
