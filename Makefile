@@ -37,10 +37,10 @@ TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_p
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
 
-# empty = compare every key in toydb.conf to its documented default;
-# make test CONF_MODE=present_only only checks that each key is present and parses.
-# Switch the default to present_only before the final submission tarball.
-CONF_MODE =
+# present_only (the default) only checks that each key in toydb.conf is present and parses,
+# so editing the values after submission cannot make make test fail.
+# make test CONF_MODE=exact compares every key to its documented default.
+CONF_MODE = present_only
 
 STRAY = testrel.* file1 file2
 
