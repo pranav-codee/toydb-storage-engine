@@ -389,6 +389,8 @@ static struct {
 	{ "buf_patterns",	T_SLIST, "uniform,hotcold,sequential" },
 	{ "hot_fraction",	T_DBL,	 "0.2" },
 	{ "hot_prob",		T_DBL,	 "0.8" },
+	{ "plot_pool",		T_INT,	 "100" },
+	{ "plot_read_pct",	T_INT,	 "50" },
 	{ "static_lengths",	T_ILIST, "100,104,110,128,160,200,256" },
 	{ "churn_fraction",	T_DBL,	 "0.3" },
 	{ "bulk_fill_factor",	T_DBL,	 "1.0" },

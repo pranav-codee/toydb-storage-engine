@@ -93,6 +93,27 @@ and every written byte must be read back from disk after the file is closed.
 Finally, an all-read and an all-write run over the same page stream must give
 the same hits, misses, physical reads and evictions.
 
+## Buffer plots
+
+`make plots` runs `scripts/plot_buffer.py` (Python 3 and matplotlib) on
+`results/bench_buffer.csv` and writes these files to `results/`, each figure
+as PDF and as 150 dpi PNG. Points are means over the repeats, with min/max
+error bars.
+
+- `buffer_hit_ratio`: hit ratio vs pool size, one panel per pattern, all reads.
+- `buffer_io_vs_mix`: disk I/O per operation,
+  `(physical_reads + total_physical_writes) / ops`, vs read percentage, at
+  pool `plot_pool`.
+- `buffer_io_breakdown`: the same disk I/O split into physical reads per
+  operation (solid lines) and total physical writes per operation (dotted
+  lines) vs read percentage, at the same pool.
+- `buffer_summary.csv` and `buffer_summary.tex` (a booktabs tabular): hit
+  ratio, physical reads, total physical writes, evictions and dirty evictions
+  per pattern and policy, at pool `plot_pool` and `plot_read_pct` reads.
+
+`plot_pool` and `plot_read_pct` are in `toydb.conf`. Run the script directly
+with `--pool N` to plot another pool size.
+
 # Part 2 slotted pages
 
 ## Slotted pages

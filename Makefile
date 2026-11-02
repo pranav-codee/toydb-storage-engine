@@ -7,6 +7,8 @@
 #                   (slow, not part of make test)
 #   make bench      runs the buffer manager benchmark (bench/bench_buffer)
 #                   with toydb.conf into results/bench_buffer.csv
+#   make plots      figures and summary table from results/bench_buffer.csv
+#                   (python3 + matplotlib, run make bench first)
 #   make clean      removes build outputs and stray test files
 #
 # Each .c is compiled from its own directory. Provided PF code gets no -I
@@ -55,7 +57,7 @@ STRESS_BIN     = tests/stress_pool
 STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
 STRESS_TIMEOUT = 600
 
-.PHONY: all tests test stress bench clean
+.PHONY: all tests test stress bench plots clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -243,6 +245,16 @@ bench: bench/bench_buffer
 	mv $(BENCH_CSV).tmp $(BENCH_CSV); end=`date +%s`; \
 	echo "make bench: $(BENCH_CSV), `wc -l < $(BENCH_CSV)` lines," \
 		"`expr $$end - $$start`s"
+
+# Figures (PDF + PNG) and the summary table into results/, from the CSV of
+# make bench. Not part of make test.
+plots:
+	@if [ ! -f $(BENCH_CSV) ]; then \
+		echo "make plots: $(BENCH_CSV) missing, run make bench first"; \
+		exit 1; \
+	fi; \
+	python3 scripts/plot_buffer.py $(BENCH_CSV) results \
+		--conf "$(CURDIR)/toydb.conf"
 
 clean:
 	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o bench/*.o $(TEST_BINS) $(STRESS_BIN) \
