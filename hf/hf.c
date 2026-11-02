@@ -456,3 +456,59 @@ HF_ScanClose(int scanfd)
 	hf_scans[scanfd].used = 0;
 	return HF_OK;
 }
+
+int
+HF_GetSpaceStats(int fd, HFSpaceStats *out)
+{
+	char *header_page;
+	long data_pages;
+	long records;
+	long useful_bytes;
+	int scanfd;
+	int error;
+	int len;
+	int rid;
+	char record[HF_MAX_RECLEN];
+
+	if (hf_find_fd(fd) < 0 || out == NULL)
+		return HFE_INVALID;
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	error = HFInternal_ReadHeader(header_page, &data_pages, &records);
+	if (PF_UnfixPage(fd, 0, FALSE) != PFE_OK)
+		return HFE_PF;
+	if (error != HF_OK || data_pages < 0 || records < 0)
+		return HFE_PF;
+
+	scanfd = HF_ScanOpen(fd);
+	if (scanfd < 0)
+		return scanfd;
+	useful_bytes = 0;
+	for (;;) {
+		error = HF_ScanNext(scanfd, record, &len, &rid);
+		if (error == HFE_EOF)
+			break;
+		if (error != HF_OK) {
+			HF_ScanClose(scanfd);
+			return error;
+		}
+		useful_bytes += len;
+	}
+	if (HF_ScanClose(scanfd) != HF_OK)
+		return HFE_PF;
+
+	out->pages = data_pages;
+	out->records = records;
+	out->useful_bytes = useful_bytes;
+	out->truncated = 0;
+	if (data_pages == 0) {
+		out->records_per_page = 0;
+		out->utilization = 0.0;
+	} else {
+		out->records_per_page = records / data_pages;
+		out->utilization = (double)useful_bytes /
+			((double)data_pages * (double)PF_PAGE_SIZE);
+	}
+	return HF_OK;
+}
