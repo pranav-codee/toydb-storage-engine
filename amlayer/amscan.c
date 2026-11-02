@@ -357,12 +357,22 @@ if (AM_scanTable[scanDesc].op == NOT_EQUAL)
     && (AM_scanTable[scanDesc].index == AM_scanTable[scanDesc].actindex))
        
        /*skip this value */
+       /* CHANGED [A3]: the skip moved the cursor to the next key but left
+       nextvalue holding the skipped key. The deleted-record check below
+       then saw a different key at nextIndex, took it for a deleted
+       record, moved back with nextIndex-- and returned the skipped key
+       after all (with every one of its record ids). The skip now updates
+       nextvalue like the normal advance further down does, so the check
+       sees an unchanged key. */
        if ((AM_scanTable[scanDesc].nextIndex + 1) <= (header->numKeys))
          {
           AM_scanTable[scanDesc].nextIndex++;
           AM_scanTable[scanDesc].actindex++;
           bcopy(pageBuf + AM_sl +  (AM_scanTable[scanDesc].nextIndex-1)*recSize
           + header->attrLength, &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
+          /* CHANGED [A3]: keep nextvalue in step with nextIndex */
+          bcopy(pageBuf + AM_sl + (AM_scanTable[scanDesc].nextIndex-1)*recSize,
+          AM_scanTable[scanDesc].nextvalue,header->attrLength);
          }
        else
           if (header->nextLeafPage == AM_NULL_PAGE)
@@ -378,9 +388,17 @@ if (AM_scanTable[scanDesc].op == NOT_EQUAL)
             bcopy(pageBuf + AM_sl + header->attrLength,
                &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
             bcopy(pageBuf,header,AM_sl);
+            /* CHANGED [A3]: header is already the new leaf's header here,
+            so header->nextLeafPage named the leaf after it, which is not
+            fixed: the unfix failed (AME_PF) and the new leaf stayed fixed.
+            Unfix the page fixed above, nextpageNum. */
             errVal = PF_UnfixPage(AM_scanTable[scanDesc].fileDesc
-                ,header->nextLeafPage,FALSE);
+                ,AM_scanTable[scanDesc].nextpageNum,FALSE);
             AM_Check;
+            /* CHANGED [A3]: keep nextvalue in step, as in the same-leaf
+            case above */
+            bcopy(pageBuf + AM_sl,AM_scanTable[scanDesc].nextvalue,
+               header->attrLength);
            }
 /* if not the first call to findnextentry , check if previous record has 
 been deleted */
@@ -491,13 +509,31 @@ int fileDesc;
 char *pageBuf;
 int pageNum;
 int errVal;
+int child; /* CHANGED [A1]: leftmost child of an internal node */
 
 errVal = PF_GetFirstPage(fileDesc,&pageNum,&pageBuf);
 AM_Check;
-if (*pageBuf == 'l')
-  AM_LeftPageNum = pageNum;
-else
-  AM_LeftPageNum = 2;
+/* CHANGED [A1]: this used to return page 2 whenever the root was not a
+leaf. That only holds for trees built by inserts (the first root split
+puts the copy of the left half in page 2). In a tree with any other page
+layout, e.g. a bulk-loaded one with its leaves in pages 1..k, full, LT,
+LE and NE scans started at the wrong page: the first leaf was skipped,
+or an internal node was read as a leaf. Now we follow the leftmost child
+pointer p0 (the int right after the internal header, as AM_FillRootPage
+writes it) from the root down until we reach a leaf. Each page is
+unfixed before its child is fixed, so only the leaf is fixed after the
+loop, and the unfix below releases it. For an insert-built tree this
+still ends at page 2. */
+while (*pageBuf != 'l')
+  {
+  bcopy(pageBuf + AM_sint,&child,AM_si);
+  errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+  AM_Check;
+  pageNum = child;
+  errVal = PF_GetThisPage(fileDesc,pageNum,&pageBuf);
+  AM_Check;
+  }
+AM_LeftPageNum = pageNum;
 errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
 AM_Check;
 return(AM_LeftPageNum);
