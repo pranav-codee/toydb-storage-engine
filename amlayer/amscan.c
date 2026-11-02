@@ -491,13 +491,31 @@ int fileDesc;
 char *pageBuf;
 int pageNum;
 int errVal;
+int child; /* CHANGED [A1]: leftmost child of an internal node */
 
 errVal = PF_GetFirstPage(fileDesc,&pageNum,&pageBuf);
 AM_Check;
-if (*pageBuf == 'l')
-  AM_LeftPageNum = pageNum;
-else
-  AM_LeftPageNum = 2;
+/* CHANGED [A1]: this used to return page 2 whenever the root was not a
+leaf. That only holds for trees built by inserts (the first root split
+puts the copy of the left half in page 2). In a tree with any other page
+layout, e.g. a bulk-loaded one with its leaves in pages 1..k, full, LT,
+LE and NE scans started at the wrong page: the first leaf was skipped,
+or an internal node was read as a leaf. Now we follow the leftmost child
+pointer p0 (the int right after the internal header, as AM_FillRootPage
+writes it) from the root down until we reach a leaf. Each page is
+unfixed before its child is fixed, so only the leaf is fixed after the
+loop, and the unfix below releases it. For an insert-built tree this
+still ends at page 2. */
+while (*pageBuf != 'l')
+  {
+  bcopy(pageBuf + AM_sint,&child,AM_si);
+  errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+  AM_Check;
+  pageNum = child;
+  errVal = PF_GetThisPage(fileDesc,pageNum,&pageBuf);
+  AM_Check;
+  }
+AM_LeftPageNum = pageNum;
 errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
 AM_Check;
 return(AM_LeftPageNum);

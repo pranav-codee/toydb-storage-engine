@@ -17,6 +17,7 @@ tests/stress_pool
 tests/test_hfpage
 tests/test_hf
 tests/test_hf_load
+tests/test_leftpage
 file1
 file2
 testrel.*
