@@ -148,13 +148,15 @@ $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 # and fails. Exit code 124 is only used to say "timed out" in the FAIL message,
 # since a provided main can return 124 by chance.
 # The scratch dir is kept on failure so the logs can be read.
+# TOYDB_ROOT is exported so a test can resolve relative toydb.conf paths
+# (like data_file) against the repo root instead of the scratch dir.
 test: tests
 	@dir=`mktemp -d "$${TMPDIR:-/tmp}/toydb-test.XXXXXX"` || exit 1; \
 	fail=0; \
 	check() { \
 		prog=$$1; mode=$$2; want=$$3; shift 3; name=`basename $$prog`; \
 		log="$$dir/$$name.log"; \
-		( cd "$$dir" && rm -f $(STRAY) && \
+		( cd "$$dir" && rm -f $(STRAY) && export TOYDB_ROOT="$(CURDIR)" && \
 		  timeout $(TEST_TIMEOUT) "$(CURDIR)/$$prog" "$$@" ) > "$$log" 2>&1; \
 		rc=$$?; note=""; \
 		if [ "$$mode" = last ]; then \
@@ -167,6 +169,9 @@ test: tests
 		fi; \
 		if [ "$$ok" -gt 0 ]; then \
 			echo "PASS $$prog"; \
+			if grep -q SKIPPED "$$log"; then \
+				echo "NOTE $$prog: skipped, see its README section"; \
+			fi; \
 		else \
 			echo "FAIL $$prog (expected \"$$want\"$$note), last lines of $$log:"; \
 			tail -n 5 "$$log" | sed 's/^/    /'; \
@@ -186,8 +191,7 @@ test: tests
 	check tests/test_workload last "test_workload done!"; \
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
-	check tests/test_hf_load last "test_hf_load done!" \
-		"conf=$(CURDIR)/toydb.conf" "data_file=$(CURDIR)/data/student.txt"; \
+	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
@@ -200,7 +204,7 @@ stress: $(STRESS_BIN)
 	@dir=`mktemp -d "$${TMPDIR:-/tmp}/toydb-stress.XXXXXX"` || exit 1; \
 	for s in $(STRESS_SEEDS); do \
 		log="$$dir/seed$$s.log"; \
-		( cd "$$dir" && timeout $(STRESS_TIMEOUT) \
+		( cd "$$dir" && export TOYDB_ROOT="$(CURDIR)" && timeout $(STRESS_TIMEOUT) \
 		  "$(CURDIR)/$(STRESS_BIN)" $$s ) > "$$log" 2>&1; \
 		rc=$$?; \
 		if tail -n 1 "$$log" | grep -qxF "stress_pool done!"; then \
