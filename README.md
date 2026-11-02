@@ -65,9 +65,13 @@ marks the page dirty, either with `PF_UnfixPage(..., TRUE)` or with
 `PF_MarkDirty` followed by a clean unfix (the two forms alternate). The
 patterns are `uniform` (random page), `hotcold` (`hot_prob` of the accesses go
 to the first `hot_fraction` of the pages) and `sequential` (a looping scan over
-all pages). The operation stream comes from a fixed xorshift generator seeded
-from `seed`, the repeat, the pattern and the read percentage, so LRU and MRU
-see exactly the same stream on every machine.
+all pages). Each run uses two fixed xorshift generators. The page stream is
+seeded from `seed`, the repeat and the pattern. The read/write choice comes
+from a second generator that is also seeded with the read percentage. So
+every read percentage, policy and pool size sees the same page sequence on
+every machine. Replacement ignores the dirty bit, so hits, misses, physical
+reads and evictions do not change with the read percentage; only the write
+counters do.
 
 Each run is one CSV line:
 `policy,pattern,pool,read_pct,repeat,ops,logical_reads,logical_writes,hits,misses,physical_reads,physical_writes,total_physical_writes,evictions,dirty_evictions,hit_ratio,ms`.
@@ -86,6 +90,8 @@ MRU 16 hits out of 30), and that the same seed gives the same counters. A
 write-only run must have only dirty evictions and
 `total_physical_writes = dirty_evictions + pages still dirty at the end`,
 and every written byte must be read back from disk after the file is closed.
+Finally, an all-read and an all-write run over the same page stream must give
+the same hits, misses, physical reads and evictions.
 
 # Part 2 slotted pages
 

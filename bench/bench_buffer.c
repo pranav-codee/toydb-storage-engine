@@ -113,22 +113,52 @@ xorshift64s(u64 *state)
 }
 
 /*
- * Seed of one operation stream. It depends on the config seed, the repeat,
- * the pattern and the read percentage, but NOT on the policy or the pool
- * size, so LRU and MRU (and every pool size) see the identical stream.
+ * Each run uses two independent generators:
+ *   page stream  which page each operation fixes. Seeded from the config
+ *                seed, the repeat and the pattern only, so every read
+ *                percentage sees the same page sequence. Replacement never
+ *                looks at the dirty bit (an unfix moves the page to the
+ *                head whether dirty or not, PF_MarkDirty does not move it,
+ *                and the victim search only skips fixed pages), so hits,
+ *                misses, physical reads and evictions do not depend on
+ *                read_pct. Only the write counters do.
+ *   r/w stream   whether each operation is a read or a write. Seeded from
+ *                the same parts plus the read percentage.
+ * Neither seed depends on the policy or the pool size, so LRU and MRU (and
+ * every pool size) see identical streams. The salts keep the two
+ * generators apart even when their other inputs are equal.
  */
+#define PAGE_SALT	0x7061676573ULL		/* "pages" */
+#define RW_SALT		0x7277726974ULL		/* "rwrit" */
+
 static u64
-stream_seed(long seed, int repeat, int pattern, int read_pct)
+mix_seed(u64 salt, long seed, int repeat, int pattern)
 {
 	u64 s;
 
-	s = splitmix64((u64)seed);
+	s = splitmix64(salt ^ (u64)seed);
 	s = splitmix64(s ^ (u64)repeat);
 	s = splitmix64(s ^ (u64)pattern);
-	s = splitmix64(s ^ (u64)read_pct);
-	if (s == 0)		/* xorshift must not start at 0 */
-		s = 1;
 	return s;
+}
+
+static u64
+nonzero(u64 s)
+{
+	return s == 0 ? 1 : s;	/* xorshift must not start at 0 */
+}
+
+static u64
+page_seed(long seed, int repeat, int pattern)
+{
+	return nonzero(mix_seed(PAGE_SALT, seed, repeat, pattern));
+}
+
+static u64
+rw_seed(long seed, int repeat, int pattern, int read_pct)
+{
+	return nonzero(splitmix64(mix_seed(RW_SALT, seed, repeat, pattern) ^
+				  (u64)read_pct));
 }
 
 /* ---------------- one benchmark run ---------------- */
@@ -142,7 +172,8 @@ struct run {
 	int pattern;		/* PAT_* */
 	int read_pct;		/* 0..100, share of reads */
 	long ops;		/* operations to run */
-	u64 seed;		/* from stream_seed */
+	u64 page_seed;		/* page stream, from page_seed() */
+	u64 rw_seed;		/* read/write stream, from rw_seed() */
 	double hot_fraction;	/* hotcold: share of pages that are hot */
 	double hot_prob;	/* hotcold: share of accesses to hot pages */
 };
@@ -182,7 +213,7 @@ RETURN VALUE:
 {
 	struct timespec t0, t1;
 	PFstats after;
-	u64 state;
+	u64 pstate, wstate;	/* page and read/write generator states */
 	char *buf;
 	int fd, page, hot, tag, p;
 	long i;
@@ -207,19 +238,21 @@ RETURN VALUE:
 	if (hot > r->npages - 1)
 		hot = r->npages - 1;
 
-	state = r->seed;
+	pstate = r->page_seed;
+	wstate = r->rw_seed;
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	for (i = 0; i < r->ops; i++) {
-		/* pick the page (modulo bias is negligible for these sizes) */
+		/* pick the page, from the page stream only (modulo bias is
+		   negligible for these sizes) */
 		if (r->pattern == PAT_SEQUENTIAL)
 			page = (int)(i % r->npages);
 		else if (r->pattern == PAT_UNIFORM || r->npages < 2)
-			page = (int)(xorshift64s(&state) % (u64)r->npages);
-		else if ((double)(xorshift64s(&state) >> 11) / 9007199254740992.0
-			 < r->hot_prob)
-			page = (int)(xorshift64s(&state) % (u64)hot);
+			page = (int)(xorshift64s(&pstate) % (u64)r->npages);
+		else if ((double)(xorshift64s(&pstate) >> 11) /
+			 9007199254740992.0 < r->hot_prob)
+			page = (int)(xorshift64s(&pstate) % (u64)hot);
 		else
-			page = hot + (int)(xorshift64s(&state) %
+			page = hot + (int)(xorshift64s(&pstate) %
 					   (u64)(r->npages - hot));
 
 		if (PF_GetThisPage(fd, page, &buf) != PFE_OK) {
@@ -235,7 +268,8 @@ RETURN VALUE:
 			return -1;
 		}
 
-		if ((int)(xorshift64s(&state) % 100) < r->read_pct) {
+		/* read or write, from the read/write stream only */
+		if ((int)(xorshift64s(&wstate) % 100) < r->read_pct) {
 			/* read: unfix clean */
 			if (PF_UnfixPage(fd, page, FALSE) != PFE_OK) {
 				pf_error("unfix");
@@ -378,7 +412,8 @@ RETURN VALUE:
 	r.pattern = pattern;
 	r.read_pct = read_pct;
 	r.ops = ops;
-	r.seed = stream_seed(CK_SEED, 0, pattern, read_pct);
+	r.page_seed = page_seed(CK_SEED, 0, pattern);
+	r.rw_seed = rw_seed(CK_SEED, 0, pattern, read_pct);
 	r.hot_fraction = 0.2;
 	r.hot_prob = 0.8;
 	if (run_one(&r, res, expected) != 0) {
@@ -498,6 +533,24 @@ check_mode(void)
 		CHECK(PF_CloseFile(fd) == PFE_OK);
 	}
 
+	/*
+	 * check 7: the page stream does not depend on read_pct, and
+	 * replacement ignores the dirty bit, so all reads and all writes
+	 * over the same pages give the same hits, misses, physical reads
+	 * and evictions. Only the write counters differ.
+	 */
+	for (pol = PF_LRU; pol <= PF_MRU; pol++) {
+		if (ck_run(pol, PAT_HOTCOLD, 8, 100, 200, &a, NULL) ||
+		    ck_run(pol, PAT_HOTCOLD, 8, 0, 200, &b, NULL))
+			goto out;
+		CHECK(a.st.hits == b.st.hits);
+		CHECK(a.st.misses == b.st.misses);
+		CHECK(a.st.physical_reads == b.st.physical_reads);
+		CHECK(a.st.evictions == b.st.evictions);
+		CHECK(a.st.logical_writes == 0);
+		CHECK(b.st.logical_writes > 0);
+	}
+
 out:
 	CHECK(PF_DestroyFile(ckname) == PFE_OK);
 	printf("bench_buffer check: %d checks, %d failed\n", ncheck, nfail);
@@ -594,7 +647,8 @@ bench_mode(void)
 			r.policy = pol;
 			r.pattern = pats[ti];
 			r.read_pct = pcts[ci];
-			r.seed = stream_seed(seed, rep, pats[ti], pcts[ci]);
+			r.page_seed = page_seed(seed, rep, pats[ti]);
+			r.rw_seed = rw_seed(seed, rep, pats[ti], pcts[ci]);
 			if (run_one(&r, &res, NULL) != 0) {
 				unlink(fname);
 				return 1;
