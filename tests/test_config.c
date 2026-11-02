@@ -384,7 +384,7 @@ static struct {
 	{ "seed",		T_INT,	 "42" },
 	{ "buf_file_pages",	T_INT,	 "1000" },
 	{ "buf_queries",	T_INT,	 "10000" },
-	{ "buf_pool_sizes",	T_ILIST, "20,50,100" },
+	{ "buf_pool_sizes",	T_ILIST, "20,50,100,900,1200" },
 	{ "buf_read_pcts",	T_ILIST, "100,90,75,50,25,10,0" },
 	{ "buf_patterns",	T_SLIST, "uniform,hotcold,sequential" },
 	{ "hot_fraction",	T_DBL,	 "0.2" },

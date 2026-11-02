@@ -21,6 +21,7 @@ file1
 file2
 testrel.*
 bench_buffer
+bench/bench_buffer
 bench_space
 bench_index
 /data/
