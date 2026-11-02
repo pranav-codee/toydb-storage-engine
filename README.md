@@ -54,7 +54,34 @@ The layer keeps eight counters per open file and a global total, read with
 
 # Part 2 slotted pages
 
-TODO: Describe the heap-file and static-layout experiments.
+## Slotted pages
+
+The heap file reserves page 0 for its metadata header. Each data page uses a
+four-byte header (`slot_count`, `data_start`), a four-byte slot directory
+growing from the front, and variable-length record bytes growing backward from
+the end. A deleted slot is empty but keeps its slot number; live records may
+be compacted within the page, so existing RIDs remain stable.
+
+RIDs use `page * HF_RID_STRIDE + slot`, with `HF_RID_STRIDE = 4096`. The
+space statistics exclude the metadata page:
+
+- `pages` is the number of data pages;
+- `records` is the number of live records;
+- `useful_bytes` is the sum of record lengths;
+- `records_per_page` is `records / pages`;
+- `utilization` is `useful_bytes / (pages * PF_PAGE_SIZE)`.
+
+Loading the configured student dataset produced 17,813 records, 1,776,824
+useful bytes, and a longest record of 109 bytes. The slotted file used 458
+data pages, with 38 records per page (integer division) and 94.715% space
+utilization (`1,776,824 / (458 * 4,096)`). This is approximately the
+expected 459 pages and 94.5% utilization. The static-layout comparison is
+left for later.
+
+`tests/test_hf_load` needs the data file at the path given by `data_file` in
+`toydb.conf`; under `make test` a relative path is resolved against the repo
+root. If the file is missing, the test prints SKIPPED and still counts as a
+pass.
 
 # Part 3 B+ tree
 

@@ -34,7 +34,8 @@ COMMON_HDRS = common/config.h
 
 AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
-	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload
+	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
+	    tests/test_hfpage tests/test_hf tests/test_hf_load
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -74,9 +75,21 @@ $(AM)/%.o: $(AM)/%.c $(AM_HDRS)
 common/%.o: common/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -c $< -o $@
 
+hf/hfpage.o: hf/hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
+hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
 tests/%.o: tests/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
 
+tests/test_hfpage.o: tests/test_hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+tests/test_hf.o: tests/test_hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
 tests/test_dirty.o: $(PF_HDRS)
@@ -114,6 +127,15 @@ tests/test_stats: tests/test_stats.o $(PF)/pflayer.o
 tests/test_workload: tests/test_workload.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
+tests/test_hfpage: tests/test_hfpage.o hf/hfpage.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+tests/test_hf: tests/test_hf.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+tests/test_hf_load: tests/test_hf_load.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
@@ -126,13 +148,15 @@ $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 # and fails. Exit code 124 is only used to say "timed out" in the FAIL message,
 # since a provided main can return 124 by chance.
 # The scratch dir is kept on failure so the logs can be read.
+# TOYDB_ROOT is exported so a test can resolve relative toydb.conf paths
+# (like data_file) against the repo root instead of the scratch dir.
 test: tests
 	@dir=`mktemp -d "$${TMPDIR:-/tmp}/toydb-test.XXXXXX"` || exit 1; \
 	fail=0; \
 	check() { \
 		prog=$$1; mode=$$2; want=$$3; shift 3; name=`basename $$prog`; \
 		log="$$dir/$$name.log"; \
-		( cd "$$dir" && rm -f $(STRAY) && \
+		( cd "$$dir" && rm -f $(STRAY) && export TOYDB_ROOT="$(CURDIR)" && \
 		  timeout $(TEST_TIMEOUT) "$(CURDIR)/$$prog" "$$@" ) > "$$log" 2>&1; \
 		rc=$$?; note=""; \
 		if [ "$$mode" = last ]; then \
@@ -145,6 +169,9 @@ test: tests
 		fi; \
 		if [ "$$ok" -gt 0 ]; then \
 			echo "PASS $$prog"; \
+			if grep -q SKIPPED "$$log"; then \
+				echo "NOTE $$prog: skipped, see its README section"; \
+			fi; \
 		else \
 			echo "FAIL $$prog (expected \"$$want\"$$note), last lines of $$log:"; \
 			tail -n 5 "$$log" | sed 's/^/    /'; \
@@ -162,6 +189,9 @@ test: tests
 	check tests/test_dirty last "test_dirty done!"; \
 	check tests/test_stats last "test_stats done!"; \
 	check tests/test_workload last "test_workload done!"; \
+	check tests/test_hfpage last "test_hfpage done!"; \
+	check tests/test_hf last "test_hf done!"; \
+	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
@@ -174,7 +204,7 @@ stress: $(STRESS_BIN)
 	@dir=`mktemp -d "$${TMPDIR:-/tmp}/toydb-stress.XXXXXX"` || exit 1; \
 	for s in $(STRESS_SEEDS); do \
 		log="$$dir/seed$$s.log"; \
-		( cd "$$dir" && timeout $(STRESS_TIMEOUT) \
+		( cd "$$dir" && export TOYDB_ROOT="$(CURDIR)" && timeout $(STRESS_TIMEOUT) \
 		  "$(CURDIR)/$(STRESS_BIN)" $$s ) > "$$log" 2>&1; \
 		rc=$$?; \
 		if tail -n 1 "$$log" | grep -qxF "stress_pool done!"; then \
@@ -190,6 +220,6 @@ stress: $(STRESS_BIN)
 	echo "make stress: all passed"
 
 clean:
-	rm -f $(PF)/*.o $(AM)/*.o common/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
+	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
 		$(PF)/testhash a.out $(AM)/a.out
 	rm -f $(STRAY) $(addprefix $(PF)/,$(STRAY)) $(addprefix $(AM)/,$(STRAY))

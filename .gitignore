@@ -14,6 +14,9 @@ tests/test_dirty
 tests/test_stats
 tests/test_workload
 tests/stress_pool
+tests/test_hfpage
+tests/test_hf
+tests/test_hf_load
 file1
 file2
 testrel.*
