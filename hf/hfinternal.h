@@ -20,5 +20,6 @@
 
 int HFInternal_ReadHeader(const char *page, long *data_pages, long *records);
 void HFInternal_InitHeader(char *page);
+void HFInternal_WriteHeader(char *page, long data_pages, long records);
 
 #endif /* HFINTERNAL_H */

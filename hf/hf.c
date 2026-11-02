@@ -1,6 +1,7 @@
 /* hf.c: heap-file lifecycle on top of the paged-file layer */
 #include "hf.h"
 #include "hfinternal.h"
+#include "hfpage.h"
 
 #include <string.h>
 
@@ -39,6 +40,15 @@ HFInternal_InitHeader(char *page)
 	memset(page, 0, PF_PAGE_SIZE);
 	hf_put_u32(page + HF_HEADER_MAGIC_OFFSET, HF_FILE_MAGIC);
 	hf_put_u32(page + HF_HEADER_VERSION_OFFSET, HF_FILE_VERSION);
+}
+
+void
+HFInternal_WriteHeader(char *page, long data_pages, long records)
+{
+	hf_put_u32(page + HF_HEADER_MAGIC_OFFSET, HF_FILE_MAGIC);
+	hf_put_u32(page + HF_HEADER_VERSION_OFFSET, HF_FILE_VERSION);
+	hf_put_u32(page + HF_HEADER_DATA_PAGES_OFFSET, (unsigned long)data_pages);
+	hf_put_u32(page + HF_HEADER_RECORDS_OFFSET, (unsigned long)records);
 }
 
 int
@@ -175,4 +185,79 @@ HF_CloseFile(int fd)
 		return HFE_PF;
 	hf_untrack_fd(index);
 	return HF_OK;
+}
+
+int
+HF_Insert(int fd, char *rec, int len)
+{
+	char *header_page;
+	char *data_page;
+	long data_pages;
+	long records;
+	int page_number;
+	int slot;
+	int error;
+
+	if (hf_find_fd(fd) < 0 || len < 0)
+		return HFE_INVALID;
+	if (len > HF_MAX_RECLEN)
+		return HFE_TOOLONG;
+	if (len > 0 && rec == NULL)
+		return HFE_INVALID;
+
+	data_pages = 0;
+	records = 0;
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	error = HFInternal_ReadHeader(header_page, &data_pages, &records);
+	if (PF_UnfixPage(fd, 0, FALSE) != PFE_OK)
+		return HFE_PF;
+	if (error != HF_OK || data_pages < 0 || records < 0)
+		return HFE_PF;
+
+	page_number = 0;
+	slot = HF_PAGE_NOSPACE;
+	if (data_pages > 0) {
+		page_number = (int)data_pages;
+		error = PF_GetThisPage(fd, page_number, &data_page);
+		if (error != PFE_OK)
+			return HFE_PF;
+		slot = HFPage_Insert((unsigned char *)data_page, rec, len);
+		if (slot == HF_PAGE_NOSPACE) {
+			if (PF_UnfixPage(fd, page_number, FALSE) != PFE_OK)
+				return HFE_PF;
+		} else if (slot < 0) {
+			PF_UnfixPage(fd, page_number, FALSE);
+			return slot == HFE_TOOLONG ? HFE_TOOLONG : HFE_INVALID;
+		} else {
+			if (PF_UnfixPage(fd, page_number, TRUE) != PFE_OK)
+				return HFE_PF;
+			records++;
+			goto update_header;
+		}
+	}
+
+	error = PF_AllocPage(fd, &page_number, &data_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	HFPage_Init((unsigned char *)data_page);
+	slot = HFPage_Insert((unsigned char *)data_page, rec, len);
+	if (slot < 0) {
+		PF_UnfixPage(fd, page_number, FALSE);
+		return slot == HFE_TOOLONG ? HFE_TOOLONG : HFE_PF;
+	}
+	if (PF_UnfixPage(fd, page_number, TRUE) != PFE_OK)
+		return HFE_PF;
+	data_pages++;
+	records++;
+
+update_header:
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	HFInternal_WriteHeader(header_page, data_pages, records);
+	if (PF_UnfixPage(fd, 0, TRUE) != PFE_OK)
+		return HFE_PF;
+	return HF_RID(page_number, slot);
 }

@@ -32,6 +32,10 @@ main(int argc, char **argv)
 	long data_pages;
 	long records;
 	int config_status;
+	char record[100];
+	int rids[40];
+	int i;
+	int j;
 
 	fname = "test_hf.pf";
 	unlink(fname);
@@ -48,14 +52,34 @@ main(int argc, char **argv)
 
 	fd = HF_OpenFile(fname);
 	check(fd >= 0, "reopen");
+	memset(record, 'R', sizeof(record));
+	for (i = 0; i < 40; i++) {
+		rids[i] = HF_Insert(fd, record, (int)sizeof(record));
+		check(rids[i] >= 0, "insert returns nonnegative rid");
+		for (j = 0; j < i; j++)
+			check(rids[i] != rids[j], "insert returns unique rid");
+	}
+	for (i = 0; i < 39; i++)
+		check(rids[i] == HF_RID(1, i), "hand-computed first-page rid");
+	check(rids[39] == HF_RID(2, 0), "hand-computed second-page rid");
+	check(HF_Insert(fd, record, 0) >= 0, "zero-length insert");
+	check(HF_Insert(fd, record, 1) >= 0, "one-byte insert");
+	check(HF_Insert(fd, record, HF_MAX_RECLEN) >= 0,
+	      "maximum-length insert");
+	check(HF_Insert(fd, record, HF_MAX_RECLEN + 1) == HFE_TOOLONG,
+	      "record above maximum rejected");
 	check(HF_CloseFile(fd) == HF_OK, "close after reopen");
 
+	fd = HF_OpenFile(fname);
+	check(fd >= 0, "reopen after inserts");
+	check(HF_CloseFile(fd) == HF_OK, "close after persisted inserts");
 	pf_fd = PF_OpenFile(fname);
 	check(pf_fd >= 0, "raw open for metadata check");
 	check(PF_GetThisPage(pf_fd, 0, &page) == PFE_OK, "read metadata page");
 	check(HFInternal_ReadHeader(page, &data_pages, &records) == HF_OK,
 	      "valid metadata");
-	check(data_pages == 0 && records == 0, "metadata values survive reopen");
+	check(data_pages == 2 && records == 43,
+	      "insert counts survive reopen");
 	check(PF_UnfixPage(pf_fd, 0, FALSE) == PFE_OK, "unfix metadata page");
 	check(PF_CloseFile(pf_fd) == PFE_OK, "close raw metadata handle");
 

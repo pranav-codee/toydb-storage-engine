@@ -128,7 +128,7 @@ tests/test_workload: tests/test_workload.o $(PF)/pflayer.o
 tests/test_hfpage: tests/test_hfpage.o hf/hfpage.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
-tests/test_hf: tests/test_hf.o hf/hf.o $(PF)/pflayer.o
+tests/test_hf: tests/test_hf.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
@@ -209,6 +209,6 @@ stress: $(STRESS_BIN)
 	echo "make stress: all passed"
 
 clean:
-	rm -f $(PF)/*.o $(AM)/*.o common/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
+	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
 		$(PF)/testhash a.out $(AM)/a.out
 	rm -f $(STRAY) $(addprefix $(PF)/,$(STRAY)) $(addprefix $(AM)/,$(STRAY))
