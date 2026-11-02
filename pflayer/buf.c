@@ -3,6 +3,9 @@ PFbufGet(), PFbufUnfix(), PFbufAlloc(), PFbufReleaseFile(), PFbufUsed() and
 PFbufPrint() */
 /* CHANGED [P5]: PFbufMarkDirty() is a new interface routine, used by
    PF_MarkDirty() */
+/* CHANGED [P6]: the I/O counters are bumped here, where hits, misses,
+   reads, writes and evictions actually happen (definitions in the spec of
+   PF_GetStats() in pf.c). PFbufFlushAll() is a new interface routine. */
 #include <stdio.h>
 #include "pf.h"
 #include "pftypes.h"
@@ -194,6 +197,14 @@ int error;		/* error value returned*/
 		if (tbpage->dirty&&((error=(*writefcn)(tbpage->fd,
 				tbpage->page,&tbpage->fpage))!= PFE_OK))
 			return(error);
+		/* CHANGED [P6]: the victim is taken now. Charge the eviction
+		(and the write-back, if it was dirty) to the victim's file,
+		which may not be the file of the incoming page */
+		PFstatInc(tbpage->fd, evictions);
+		if (tbpage->dirty){
+			PFstatInc(tbpage->fd, dirty_evictions);
+			PFstatInc(tbpage->fd, physical_writes);
+		}
 		tbpage->dirty = FALSE;
 
 		/* unlink from hash table */
@@ -267,12 +278,14 @@ int i;
 	return(PFE_OK);
 }
 
-PFbufGet(fd,pagenum,fpage,readfcn,writefcn)
+/* CHANGED [P6]: new argument "count" */
+PFbufGet(fd,pagenum,fpage,readfcn,writefcn,count)
 int fd;	/* file descriptor */
 int pagenum;	/* page number */
 PFfpage **fpage;	/* pointer to pointer to file page */
 int (*readfcn)();	/* function to read a page */
 int (*writefcn)();	/* function to write a page */
+int count;	/* TRUE: count a logical read and a hit or miss */
 /****************************************************************************
 SPECIFICATIONS:
 	Get a page whose number is "pagenum" from the file pointed
@@ -290,6 +303,16 @@ SPECIFICATIONS:
 		PFpage *fpage;
 	which will write one page into the file.
 	It is an error to read a page already fixed in the buffer.
+	CHANGED [P6]: statistics, all charged to file "fd":
+	- every page actually read with readfcn() is a physical read,
+	  whatever "count" is;
+	- if "count" is TRUE and the page ends up fixed (PFE_OK), it is
+	  one logical read plus a hit (page was in the pool) or a miss
+	  (it was read). pf.c passes TRUE only from PF_GetThisPage() and
+	  PF_GetNextPage(); PF_AllocPage() and PF_DisposePage() pass FALSE.
+	- a failed request (PFE_PAGEFIXED, no buffer, read error) is not a
+	  logical read.
+	The page's lwcounted flag is cleared, since a new fix period starts.
 
 RETURN VALUE:
 	PFE_OK	if no error.
@@ -324,6 +347,8 @@ int error;
 			*fpage = NULL;
 			return(error);
 		}
+		/* CHANGED [P6]: one page read from the file */
+		PFstatInc(fd, physical_reads);
 
 		/* insert new page into hash table */
 		if ((error=PFhashInsert(fd,pagenum,bpage))!=PFE_OK){
@@ -338,6 +363,9 @@ int error;
 		bpage->fd = fd;
 		bpage->page = pagenum;
 		bpage->dirty = FALSE;
+		/* CHANGED [P6]: a miss */
+		if (count)
+			PFstatInc(fd, misses);
 	}
 	else if (bpage->fixed){
 		/* page already in memory, and is fixed, so we can't
@@ -346,6 +374,15 @@ int error;
 		PFerrno = PFE_PAGEFIXED;
 		return(PFerrno);
 	}
+	/* CHANGED [P6]: a hit */
+	else if (count)
+		PFstatInc(fd, hits);
+
+	/* CHANGED [P6]: hit or miss, it is one logical read, and a new fix
+	period starts for logical write counting */
+	if (count)
+		PFstatInc(fd, logical_reads);
+	bpage->lwcounted = FALSE;
 
 	/* Fix the page in the buffer then return*/
 	bpage->fixed = TRUE;
@@ -385,10 +422,17 @@ PFbpage *bpage;
 		return(PFerrno);
 	}
 
-	if (dirty)
+	if (dirty){
 		/* mark this page dirty */
 		bpage->dirty = TRUE;
-	
+		/* CHANGED [P6]: a logical write, unless one was already
+		counted for this page since it was fixed */
+		if (!bpage->lwcounted){
+			PFstatInc(fd, logical_writes);
+			bpage->lwcounted = TRUE;
+		}
+	}
+
 	/* unfix the page */
 	bpage->fixed = FALSE;
 	
@@ -450,6 +494,9 @@ int error;
 	bpage->page = pagenum;
 	bpage->fixed = TRUE;
 	bpage->dirty = FALSE;
+	/* CHANGED [P6]: a new fix period; no read is counted, the page
+	is new and not read from the file */
+	bpage->lwcounted = FALSE;
 
 	*fpage = &bpage->fpage;
 	return(PFE_OK);
@@ -462,7 +509,11 @@ int (*writefcn)();	/* function to write a page of file */
 /****************************************************************************
 SPECIFICATIONS:
 	Release all pages of file "fd" from the buffer and
-	put them into the free list 
+	put them into the free list
+	CHANGED [P6]: each dirty page written back is a physical write of
+	file "fd". These pages are not counted as evictions. PF_CloseFile()
+	calls this before it frees the file table entry, so fd is still
+	valid and the per-file counters get the writes too.
 
 AUTHOR: clc
 
@@ -494,6 +545,9 @@ int error;		/* error code */
 					&bpage->fpage))!= PFE_OK))
 				/* error writing file */
 				return(error);
+			/* CHANGED [P6]: a write-back at close */
+			if (bpage->dirty)
+				PFstatInc(fd, physical_writes);
 			bpage->dirty = FALSE;
 
 			/* get rid of it from the hash table */
@@ -524,6 +578,9 @@ SPECIFICATIONS:
 	Mark page numbered "pagenum" of file descriptor "fd" as used.
 	The page must be fixed in the buffer. Make this page most
 	recently used.
+	CHANGED [P6]: marking the page dirty is a logical write (at most
+	once per fix period). Only PF_AllocPage() calls this, for a page
+	that is new, so this is where "dirty from birth" is counted.
 
 AUTHOR: clc
 
@@ -548,6 +605,11 @@ PFbpage *bpage;	/* pointer to the bpage we are looking for */
 
 	/* mark this page dirty */
 	bpage->dirty = TRUE;
+	/* CHANGED [P6]: a logical write, once per fix period */
+	if (!bpage->lwcounted){
+		PFstatInc(fd, logical_writes);
+		bpage->lwcounted = TRUE;
+	}
 
 	/* make this page head of the list of buffers*/
 	PFbufUnlink(bpage);
@@ -569,6 +631,10 @@ SPECIFICATIONS:
 	cleared when the page is written back (eviction in
 	PFbufInternalAlloc() or PFbufReleaseFile()); PFbufUnfix() with
 	dirty FALSE leaves it as it is.
+	CHANGED [P6]: this is a logical write of file "fd", unless one was
+	already counted for the page since it was last fixed (so MarkDirty
+	followed by PFbufUnfix(TRUE) in one fix period counts once).
+	CHANGED [P6]: PFbufFlushAll() also clears the dirty bit.
 
 RETURN VALUE:
 	PFE_OK		if no error.
@@ -588,8 +654,53 @@ PFbpage *bpage;	/* pointer to the bpage we are looking for */
 
 	/* mark this page dirty, nothing else */
 	bpage->dirty = TRUE;
+	/* CHANGED [P6]: a logical write, once per fix period */
+	if (!bpage->lwcounted){
+		PFstatInc(fd, logical_writes);
+		bpage->lwcounted = TRUE;
+	}
 
 	return(PFE_OK);
+}
+
+/* CHANGED [P6]: new function behind PF_FlushAll() */
+PFbufFlushAll(writefcn)
+int (*writefcn)();	/* function to write a page */
+/****************************************************************************
+SPECIFICATIONS:
+	Write every dirty page in the pool to its own file with
+	writefcn(fd,page,fpage), fixed or not, and clear its dirty bit.
+	The pages stay in the pool and keep their place in the used list,
+	and the fixed flag is not touched, so LRU/MRU see nothing. Each
+	page written is one physical write of the file it belongs to.
+	If a write fails, the page stays dirty, the other pages are still
+	written, and the first error is returned.
+
+RETURN VALUE:
+	PFE_OK		if every write worked.
+	the first PF error code from writefcn() otherwise.
+
+GLOBAL VARIABLES MODIFIED:
+	none (only the dirty fields of the pages).
+*****************************************************************************/
+{
+PFbpage *bpage;
+int error;
+int first = PFE_OK;	/* first error seen */
+
+	for (bpage = PFfirstbpage; bpage != NULL; bpage = bpage->nextpage){
+		if (!bpage->dirty)
+			continue;
+		if ((error=(*writefcn)(bpage->fd,bpage->page,
+				&bpage->fpage)) != PFE_OK){
+			if (first == PFE_OK)
+				first = error;
+			continue;
+		}
+		PFstatInc(bpage->fd, physical_writes);
+		bpage->dirty = FALSE;
+	}
+	return(first);
 }
 
 /* CHANGED [P3]: new debug helper for tests/test_policy.c, not in pf.h */
@@ -626,9 +737,11 @@ PFbpage *bpage;
 		printf("empty\n");
 	else {
 		printf("fd\tpage\tfixed\tdirty\tfpage\n");
+		/* CHANGED [P7]: print the frame address with %p; the old
+		(int) cast and %d cut a 64-bit pointer in half */
 		for(bpage = PFfirstbpage; bpage != NULL; bpage= bpage->nextpage)
-			printf("%d\t%d\t%d\t%d\t%d\n",
+			printf("%d\t%d\t%d\t%d\t%p\n",
 				bpage->fd,bpage->page,(int)bpage->fixed,
-				(int)bpage->dirty,(int)&bpage->fpage);
+				(int)bpage->dirty,(void *)&bpage->fpage);
 	}
 }

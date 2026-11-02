@@ -92,19 +92,24 @@ int PF_OpenFileEx(char *fname, int policy);
 int PF_MarkDirty(int fd, int pageNum);
 
 /*
- * Copy statistics for fd into out.  fd == -1 requests totals over all open
- * files.  Return PFE_OK or a PF error code.
+ * Copy statistics for fd into out.  fd == -1 requests the global totals
+ * since the last PF_ResetStats(-1), including files closed since then.
+ * Return PFE_OK or PFE_FD.  Counter definitions: see PF_GetStats in pf.c.
+ * CHANGED [P6]: comment only, -1 was "totals over all open files"
  */
 int PF_GetStats(int fd, PFstats *out);
 
 /*
- * Reset statistics for fd.  fd == -1 resets totals for all open files.
+ * Reset statistics for fd (the global totals are not touched).  fd == -1
+ * resets the global totals and every open file.  An invalid fd is ignored.
+ * CHANGED [P6]: comment only, matches the implementation
  */
 void PF_ResetStats(int fd);
 
 /*
- * Print statistics for fd to out.  fd == -1 prints totals over all open
- * files.
+ * Print statistics for fd to out (stdout if NULL), one "<name>: <value>"
+ * line per field.  fd == -1 prints the global totals.
+ * CHANGED [P6]: comment only, matches the implementation
  */
 void PF_PrintStats(int fd, FILE *out);
 

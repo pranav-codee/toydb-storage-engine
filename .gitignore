@@ -11,6 +11,7 @@ tests/test_config
 tests/test_pool
 tests/test_policy
 tests/test_dirty
+tests/test_stats
 file1
 file2
 testrel.*

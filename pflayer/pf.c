@@ -22,6 +22,18 @@ static PFftab_ele PFftab[PF_FTAB_SIZE]; /* table of opened files */
    calls PF_Init (testpf.c) behaves as before */
 static int PFdefaultPolicy = PF_LRU;
 
+/* CHANGED [P6]: global I/O counters, bumped on every event together with
+   the per-file ones (PFstatInc in pftypes.h). Not a sum over open files,
+   so counts of files closed since the last reset are kept. */
+PFstats PFtotStats;
+
+/* CHANGED [P6]: PFftabStats() returns this for an invalid fd, so a stray
+   fd can't crash a counter update (the global count still happens) */
+static PFstats PFscratchStats;
+
+/* CHANGED [P6]: all zero (static), copied to reset counters */
+static PFstats PFzeroStats;
+
 /* true if file descriptor fd is invaild */
 #define PFinvalidFd(fd) ((fd) < 0 || (fd) >= PF_FTAB_SIZE \
 				|| PFftab[fd].fname == NULL)
@@ -427,6 +439,10 @@ int fd; /* file descriptor */
 	/* CHANGED [P3]: remember the replacement policy of this file */
 	PFftab[fd].policy = policy;
 
+	/* CHANGED [P6]: a newly opened file starts with zero counters
+	(the entry may hold the counts of a file closed earlier) */
+	PFftab[fd].stats = PFzeroStats;
+
 	/* save the file name */
 	if ((PFftab[fd].fname = savestr(fname)) == NULL){
 		/* no memory */
@@ -471,6 +487,25 @@ RETURN VALUE:
 	if (PFinvalidFd(fd))
 		return(PF_LRU);
 	return(PFftab[fd].policy);
+}
+
+/* CHANGED [P6]: new internal function, used by buf.c to update counters */
+PFstats *PFftabStats(fd)
+int fd;		/* file descriptor */
+/****************************************************************************
+SPECIFICATIONS:
+	Return a pointer to the counters of open file "fd". buf.c only
+	passes fds of open files (the fd of a page in the pool), but for an
+	invalid fd a scratch struct is returned, so the caller can still
+	increment it and the global count is not lost.
+
+RETURN VALUE:
+	pointer to the counters, never NULL.
+*****************************************************************************/
+{
+	if (PFinvalidFd(fd))
+		return(&PFscratchStats);
+	return(&PFftab[fd].stats);
 }
 
 PF_CloseFile(fd)
@@ -604,9 +639,11 @@ PFfpage *fpage;	/* pointer to file page */
 	}
 
 	/* scan the file until a valid used page is found */
+	/* CHANGED [P6]: count = TRUE, every page fixed by the scan is a
+	logical read, also the free ones it steps over */
 	for (temppage= *pagenum+1;temppage<PFftab[fd].hdr.numpages;temppage++){
 		if ( (error=PFbufGet(fd,temppage,&fpage,PFreadfcn,
-					PFwritefcn))!= PFE_OK)
+					PFwritefcn,TRUE))!= PFE_OK)
 			return(error);
 		else if (fpage->nextfree == PF_PAGE_USED){
 			/* found a used page */
@@ -659,7 +696,9 @@ PFfpage *fpage;
 		return(PFerrno);
 	}
 
-	if ( (error=PFbufGet(fd,pagenum,&fpage,PFreadfcn,PFwritefcn))!= PFE_OK){
+	/* CHANGED [P6]: count = TRUE, a logical read */
+	if ( (error=PFbufGet(fd,pagenum,&fpage,PFreadfcn,PFwritefcn,
+				TRUE))!= PFE_OK){
 		if (error== PFE_PAGEFIXED)
 			*pagebuf = fpage->pagebuf;
 		return(error);
@@ -711,8 +750,10 @@ int error;
 	if (PFftab[fd].hdr.firstfree != PF_PAGE_LIST_END){
 		/* get a page from the free list */
 		*pagenum = PFftab[fd].hdr.firstfree;
+		/* CHANGED [P6]: count = FALSE, reusing a free page is not a
+		logical read (a disk read is still a physical read) */
 		if ((error=PFbufGet(fd,*pagenum,&fpage,PFreadfcn,
-					PFwritefcn))!= PFE_OK)
+					PFwritefcn,FALSE))!= PFE_OK)
 			/* can't get the page */
 			return(error);
 		PFftab[fd].hdr.firstfree = fpage->nextfree;
@@ -781,7 +822,10 @@ int error;
 		return(PFerrno);
 	}
 
-	if ((error=PFbufGet(fd,pagenum,&fpage,PFreadfcn,PFwritefcn))!= PFE_OK)
+	/* CHANGED [P6]: count = FALSE, disposing is not a logical read (the
+	unfix with TRUE below is a logical write) */
+	if ((error=PFbufGet(fd,pagenum,&fpage,PFreadfcn,PFwritefcn,
+				FALSE))!= PFE_OK)
 		/* can't get this page */
 		return(error);
 	
@@ -879,6 +923,149 @@ RETURN VALUE:
 	}
 
 	return(PFbufMarkDirty(fd,pagenum));
+}
+
+/* CHANGED [P6]: new public call, I/O statistics (declared in pf.h) */
+int PF_GetStats(fd,out)
+int fd;		/* file descriptor, or -1 for the global totals */
+PFstats *out;	/* where to copy the counters */
+/****************************************************************************
+SPECIFICATIONS:
+	Copy the I/O counters of open file "fd" into *out. With fd == -1
+	copy the global accumulator instead: the totals since the last
+	PF_ResetStats(-1), including files that have been closed since.
+
+	What each counter counts:
+	logical_reads	one per request to fix an existing page through
+			PF_GetThisPage, PF_GetFirstPage or PF_GetNextPage,
+			hit or miss. Every page PF_GetNextPage fixes while
+			scanning counts, also free pages it steps over. A
+			request that fails (page already fixed, no free
+			frame, read error) does not count. The page fixes
+			inside PF_AllocPage (reuse of a free page) and
+			PF_DisposePage are not logical reads.
+	hits, misses	logical reads whose page was / was not in the pool.
+			hits + misses == logical_reads always.
+	physical_reads	pages actually read from the file into a frame
+			(one per miss, plus a disk read in PF_AllocPage or
+			PF_DisposePage). The file header read by
+			PF_OpenFile is NOT counted.
+	logical_writes	dirty-marking requests: PF_UnfixPage(..., TRUE),
+			PF_MarkDirty, a new page from PF_AllocPage (dirty
+			from birth), and the unfix inside PF_DisposePage.
+			A page counts at most once between two consecutive
+			fixes of it (a flag in its frame, cleared when the
+			page is fixed or loaded), so PF_MarkDirty then
+			PF_UnfixPage(TRUE) in one fix period counts once.
+	physical_writes	pages written to the file: dirty pages written
+			back on eviction, dirty pages written back when the
+			file is closed, and pages written by PF_FlushAll.
+			The file header written by PF_CloseFile is NOT
+			counted.
+	evictions	victim frames taken to make room, clean or dirty.
+			Pages released when their file is closed are not
+			evictions.
+	dirty_evictions	evictions whose victim was dirty and written back.
+
+	Attribution: logical reads, hits, misses, physical reads and logical
+	writes go to the file of the requested page. Evictions, dirty
+	evictions and physical writes go to the file that owns the victim
+	(or written) page, which can differ from the file that asked for
+	the frame since the pool is shared.
+	Per-file counters are zeroed when the file is opened. The global
+	accumulator is updated on every event, it is not a sum over open
+	files.
+
+RETURN VALUE:
+	PFE_OK	if ok.
+	PFE_FD	if fd is not -1 and not an open file.
+*****************************************************************************/
+{
+	if (fd == -1){
+		*out = PFtotStats;
+		return(PFE_OK);
+	}
+	if (PFinvalidFd(fd)){
+		PFerrno = PFE_FD;
+		return(PFerrno);
+	}
+	*out = PFftab[fd].stats;
+	return(PFE_OK);
+}
+
+/* CHANGED [P6]: new public call (declared in pf.h) */
+void PF_ResetStats(fd)
+int fd;		/* file descriptor, or -1 for everything */
+/****************************************************************************
+SPECIFICATIONS:
+	Zero the counters of open file "fd"; the global accumulator is not
+	touched. With fd == -1 zero the global accumulator and the counters
+	of every open file. An invalid fd is ignored.
+
+RETURN VALUE: none
+*****************************************************************************/
+{
+int i;
+
+	if (fd == -1){
+		PFtotStats = PFzeroStats;
+		for (i=0; i < PF_FTAB_SIZE; i++)
+			if (PFftab[i].fname != NULL)
+				PFftab[i].stats = PFzeroStats;
+		return;
+	}
+	if (PFinvalidFd(fd))
+		return;
+	PFftab[fd].stats = PFzeroStats;
+}
+
+/* CHANGED [P6]: new public call (declared in pf.h) */
+void PF_PrintStats(fd,out)
+int fd;		/* file descriptor, or -1 for the global totals */
+FILE *out;	/* where to print, stdout if NULL */
+/****************************************************************************
+SPECIFICATIONS:
+	Print the counters PF_GetStats(fd) returns to "out" (stdout if
+	NULL), one line per counter in the order of the PFstats struct,
+	as "<field name>: <value>\n", and nothing else. For an invalid fd
+	nothing is printed.
+
+RETURN VALUE: none
+*****************************************************************************/
+{
+PFstats s;
+
+	if (PF_GetStats(fd,&s) != PFE_OK)
+		return;
+	if (out == NULL)
+		out = stdout;
+	fprintf(out,"logical_reads: %ld\n",s.logical_reads);
+	fprintf(out,"logical_writes: %ld\n",s.logical_writes);
+	fprintf(out,"hits: %ld\n",s.hits);
+	fprintf(out,"misses: %ld\n",s.misses);
+	fprintf(out,"physical_reads: %ld\n",s.physical_reads);
+	fprintf(out,"physical_writes: %ld\n",s.physical_writes);
+	fprintf(out,"evictions: %ld\n",s.evictions);
+	fprintf(out,"dirty_evictions: %ld\n",s.dirty_evictions);
+}
+
+/* CHANGED [P6]: new public call (declared in pf.h) */
+int PF_FlushAll()
+/****************************************************************************
+SPECIFICATIONS:
+	Write every dirty page in the buffer pool (any open file, fixed or
+	not) to its file and clear its dirty bit. The pages stay in the
+	pool and keep their place in the used list, so LRU/MRU are not
+	affected. Each page written counts as a physical write of its
+	file. File headers are not written (PF_CloseFile does that).
+	After a failed write the other pages are still written.
+
+RETURN VALUE:
+	PFE_OK	if ok.
+	the first PF error code otherwise.
+*****************************************************************************/
+{
+	return(PFbufFlushAll(PFwritefcn));
 }
 
 /* error messages */
