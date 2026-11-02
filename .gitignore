@@ -10,6 +10,7 @@ amlayer/amtest
 tests/test_config
 tests/test_pool
 tests/test_policy
+tests/test_dirty
 file1
 file2
 testrel.*

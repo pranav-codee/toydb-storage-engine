@@ -836,6 +836,51 @@ RETURN VALUE:
 	return(PFbufUnfix(fd,pagenum,dirty));
 }
 
+/* CHANGED [P5]: new public call, sets the dirty bit only (declared in pf.h) */
+PF_MarkDirty(fd,pagenum)
+int fd;		/* file descriptor */
+int pagenum;	/* page number */
+/****************************************************************************
+SPECIFICATIONS:
+	Tell the Paged File Interface that page "pagenum" of file "fd"
+	has been modified, so it is written back to the file when it
+	leaves the buffer (eviction or PF_CloseFile).
+	The page must be in the buffer pool. It can be fixed or unfixed.
+	Only the dirty bit is set. Nothing else changes:
+	- the page keeps its place in the used list, so LRU/MRU see no
+	  access (PFbufUsed() would move it to the head, which is why it
+	  is not used here),
+	- the fix state is unchanged, so the caller still has to call
+	  PF_UnfixPage() for a page it fixed,
+	- no page is read or written.
+	Calling it again on a page that is already dirty does nothing more.
+	PF_UnfixPage(fd,pagenum,FALSE) after this does not clear the bit.
+	A caller that changes the page data must hold the page fixed
+	while doing it (and until after this call), otherwise the page
+	may be evicted before it is marked and the change is lost.
+
+RETURN VALUE:
+	PFE_OK		if no error.
+	PFE_FD		if fd is not an open file.
+	PFE_INVALIDPAGE	if pagenum is not in 0..numpages-1.
+	PFE_PAGENOTINBUF	if the page is not in the buffer pool.
+
+*****************************************************************************/
+{
+
+	if (PFinvalidFd(fd)){
+		PFerrno = PFE_FD;
+		return(PFerrno);
+	}
+
+	if (PFinvalidPagenum(fd,pagenum)){
+		PFerrno = PFE_INVALIDPAGE;
+		return(PFerrno);
+	}
+
+	return(PFbufMarkDirty(fd,pagenum));
+}
+
 /* error messages */
 static char *PFerrormsg[]={
 "No error",

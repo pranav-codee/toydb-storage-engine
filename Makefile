@@ -32,7 +32,7 @@ COMMON_HDRS = common/config.h
 
 AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
-	    tests/test_policy
+	    tests/test_policy tests/test_dirty
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -71,6 +71,7 @@ tests/%.o: tests/%.c $(COMMON_HDRS)
 
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
+tests/test_dirty.o: $(PF_HDRS)
 
 tests: $(TEST_BINS)
 
@@ -91,6 +92,9 @@ tests/test_pool: tests/test_pool.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_policy: tests/test_policy.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+tests/test_dirty: tests/test_dirty.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 # The provided test mains have no return statement, so exit codes are garbage.
@@ -135,6 +139,7 @@ test: tests
 	check tests/test_config last "test_config done!" "$(CURDIR)/toydb.conf" $(CONF_MODE); \
 	check tests/test_pool last "test_pool done!"; \
 	check tests/test_policy last "test_policy done!"; \
+	check tests/test_dirty last "test_dirty done!"; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \

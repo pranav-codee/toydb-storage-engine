@@ -1,6 +1,8 @@
 /* buf.c: buffer management routines. The interface routines are:
 PFbufGet(), PFbufUnfix(), PFbufAlloc(), PFbufReleaseFile(), PFbufUsed() and
 PFbufPrint() */
+/* CHANGED [P5]: PFbufMarkDirty() is a new interface routine, used by
+   PF_MarkDirty() */
 #include <stdio.h>
 #include "pf.h"
 #include "pftypes.h"
@@ -550,6 +552,42 @@ PFbpage *bpage;	/* pointer to the bpage we are looking for */
 	/* make this page head of the list of buffers*/
 	PFbufUnlink(bpage);
 	PFbufLinkHead(bpage);
+
+	return(PFE_OK);
+}
+
+/* CHANGED [P5]: new function behind PF_MarkDirty(), dirty bit only */
+PFbufMarkDirty(fd,pagenum)
+int fd;		/* file descriptor */
+int pagenum;	/* page number */
+/****************************************************************************
+SPECIFICATIONS:
+	Set the dirty bit of page "pagenum" of file "fd", which must be
+	in the buffer (fixed or unfixed). Unlike PFbufUsed(), the page is
+	not moved in the used list and its fixed flag is not touched, and
+	no I/O is done. Setting the bit again is harmless. The bit is only
+	cleared when the page is written back (eviction in
+	PFbufInternalAlloc() or PFbufReleaseFile()); PFbufUnfix() with
+	dirty FALSE leaves it as it is.
+
+RETURN VALUE:
+	PFE_OK		if no error.
+	PFE_PAGENOTINBUF	if the page is not in the buffer.
+
+GLOBAL VARIABLES MODIFIED:
+	none (only the dirty field of the page's buffer).
+*****************************************************************************/
+{
+PFbpage *bpage;	/* pointer to the bpage we are looking for */
+
+	if ((bpage=PFhashFind(fd,pagenum))==NULL){
+		/* page not in the buffer */
+		PFerrno = PFE_PAGENOTINBUF;
+		return(PFerrno);
+	}
+
+	/* mark this page dirty, nothing else */
+	bpage->dirty = TRUE;
 
 	return(PFE_OK);
 }

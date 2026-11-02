@@ -89,3 +89,4 @@ extern PFbufUnfix();
 extern PFbufalloc();
 extern PFbufReleaseFile();
 extern PFbufInit();	/* CHANGED [P1]: allocate the pool of n frames */
+extern PFbufMarkDirty();	/* CHANGED [P5]: set dirty bit only, for PF_MarkDirty */
