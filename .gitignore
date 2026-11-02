@@ -13,6 +13,7 @@ tests/test_policy
 tests/test_dirty
 tests/test_stats
 tests/test_workload
+tests/stress_pool
 file1
 file2
 testrel.*

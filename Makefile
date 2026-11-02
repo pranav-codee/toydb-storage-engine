@@ -3,6 +3,8 @@
 #   make            builds pflayer/pflayer.o and amlayer/amlayer.o
 #   make tests      builds the test programs
 #   make test       runs them in a scratch dir and checks each one finished
+#   make stress     builds tests/stress_pool and runs it for STRESS_SEEDS
+#                   (slow, not part of make test)
 #   make clean      removes build outputs and stray test files
 #
 # Each .c is compiled from its own directory. Provided PF code gets no -I
@@ -44,7 +46,13 @@ CONF_MODE = present_only
 
 STRAY = testrel.* file1 file2
 
-.PHONY: all tests test clean
+# make stress: randomized model-based test of the buffer pool, one run per seed
+# with the default op count (make stress STRESS_SEEDS="1 2 3")
+STRESS_BIN     = tests/stress_pool
+STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+STRESS_TIMEOUT = 600
+
+.PHONY: all tests test stress clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -74,6 +82,7 @@ tests/test_policy.o: $(PF_HDRS)
 tests/test_dirty.o: $(PF_HDRS)
 tests/test_stats.o: $(PF_HDRS)
 tests/test_workload.o: $(PF_HDRS)
+tests/stress_pool.o: $(PF_HDRS)
 
 tests: $(TEST_BINS)
 
@@ -103,6 +112,9 @@ tests/test_stats: tests/test_stats.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_workload: tests/test_workload.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+$(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 # The provided test mains have no return statement, so exit codes are garbage.
@@ -156,7 +168,28 @@ test: tests
 	rm -rf "$$dir"; \
 	echo "make test: all passed"
 
+# One stress_pool run per seed in a scratch dir, stopping at the first seed
+# whose last line is not "stress_pool done!" (the dir is kept then).
+stress: $(STRESS_BIN)
+	@dir=`mktemp -d "$${TMPDIR:-/tmp}/toydb-stress.XXXXXX"` || exit 1; \
+	for s in $(STRESS_SEEDS); do \
+		log="$$dir/seed$$s.log"; \
+		( cd "$$dir" && timeout $(STRESS_TIMEOUT) \
+		  "$(CURDIR)/$(STRESS_BIN)" $$s ) > "$$log" 2>&1; \
+		rc=$$?; \
+		if tail -n 1 "$$log" | grep -qxF "stress_pool done!"; then \
+			echo "PASS seed $$s: `head -n 1 "$$log"`"; \
+		else \
+			note=""; [ $$rc -eq 124 ] && note=", timed out after $(STRESS_TIMEOUT)s"; \
+			echo "FAIL seed $$s (exit $$rc$$note), log $$log:"; \
+			tail -n 40 "$$log" | sed 's/^/    /'; \
+			echo "make stress: FAILED, logs kept in $$dir"; exit 1; \
+		fi; \
+	done; \
+	rm -rf "$$dir"; \
+	echo "make stress: all passed"
+
 clean:
-	rm -f $(PF)/*.o $(AM)/*.o common/*.o tests/*.o $(TEST_BINS) \
+	rm -f $(PF)/*.o $(AM)/*.o common/*.o tests/*.o $(TEST_BINS) $(STRESS_BIN) \
 		$(PF)/testhash a.out $(AM)/a.out
 	rm -f $(STRAY) $(addprefix $(PF)/,$(STRAY)) $(addprefix $(AM)/,$(STRAY))
