@@ -1,4 +1,5 @@
-/* test_leftpage.c: the scans that start at the leftmost leaf (A1)
+/* test_leftpage.c: the scans that start at the leftmost leaf (A1) and the
+ * NOT_EQUAL scan (A3)
  *
  * usage: test_leftpage
  *
@@ -6,7 +7,8 @@
  * scans at the leftmost leaf, which it gets from GetLeftPageNum() in
  * amscan.c. This test builds B+ trees of different page layouts and checks
  * GetLeftPageNum() and every scan operator against the keys that were put
- * in.
+ * in. S4 and S5 check that a NE scan skips its value (all of its record
+ * ids) wherever that key sits in the tree.
  *
  *   S0  built with AM_InsertEntry only (3000 int keys, scrambled order).
  *       Here the leftmost leaf is page 2: the first root split puts the
@@ -21,17 +23,26 @@
  *   S3  internal nodes allocated before the leaves: internal nodes in
  *       pages 1 and 2, leaves in 3..8, root in page 0. Leftmost = 3, and
  *       page 2 is an internal node.
+ *   S4  NE scans on the S1 layout with the excluded key (a) in the middle
+ *       of a leaf, (b) the last key of a leaf that has a next leaf, (c) the
+ *       first key of a leaf that is not the first, (d) the smallest and
+ *       the largest key. Each case gets its own freshly built index, so a
+ *       case that leaves a page fixed cannot spoil the next one.
+ *   S5  the same five cases, with the excluded key holding 3 record ids
+ *       (the AM keeps duplicates as one key with a list of record ids);
+ *       every one of them must be skipped. EQ on the key must return all 3.
  *
- * S1-S3 are written page by page with the AM's own page code
+ * S1-S5 are written page by page with the AM's own page code
  * (AM_InsertintoLeaf for leaves, AM_FillRootPage and AM_AddtoIntPage for
  * internal nodes), on a leaf header copied from the page 0 that
  * AM_CreateIndex made, so the pages are in exactly the AM format.
  *
- * Key i is 10*i and its record id is i. Every scan's record ids are
- * checked against the expected set: each one exactly once, nothing else,
- * and in key order for the full, LT and LE scans. After the scans the
- * index file is closed with PF_CloseFile, which fails if any page of it is
- * still fixed, so a page left fixed by GetLeftPageNum fails the test.
+ * Key i is 10*i and its record id is i (extra record ids of a duplicated
+ * key are numbered after those). Every scan's record ids are checked
+ * against the expected set: each one exactly once, nothing else, and in
+ * key order for the full, LT and LE scans. After the scans the index file
+ * is closed with PF_CloseFile, which fails if any page of it is still
+ * fixed, so a page left fixed by a scan fails the test.
  *
  * Each scenario runs in a child process with a time limit, so a crash or
  * an endless scan is reported as a failure of that scenario. The last
@@ -95,33 +106,33 @@ static int ncheck = 0;		/* all checks (in this process) */
 #define KEYLEN		((int)sizeof(int))
 #define MAXKEYS		3200		/* most keys in any scenario */
 #define TIMELIMIT	20		/* seconds per scenario */
+#define NSCEN		6		/* scenarios S0..S5 */
 
 /* ---------------- expected set and scan checking ---------------- */
 
 /*
- * The keys in the index, in key order: rid_by_pos[p] is the record id of
- * the p-th smallest key, nkeys of them. pos_of[rid] is the inverse (record
- * ids are 0..nkeys-1, each used once).
+ * The (key, record id) pairs in the index: rid_by_pos[p] is the record id
+ * of the p-th smallest key, nkeys of them. Record ids are 0..nkeys-1, each
+ * used once; a key can have several.
  */
 static int rid_by_pos[MAXKEYS];
-static int pos_of[MAXKEYS];
 static int key_of[MAXKEYS];		/* key of record id rid */
 static int nkeys;
 
 static void
 add_key(int key, int rid)
-/* Remember one (key, rid) pair. Keys must be added in key order. */
+/* Remember one (key, rid) pair. Call sort_by_key() afterwards if they
+   were not added in key order. */
 {
 	rid_by_pos[nkeys] = rid;
-	pos_of[rid] = nkeys;
 	key_of[rid] = key;
 	nkeys++;
 }
 
 static void
 sort_by_key(void)
-/* Rebuild rid_by_pos/pos_of after keys were added out of order (S0, and
-   S1 after its extra inserts). Insertion sort, small n. */
+/* Put rid_by_pos in key order after pairs were added out of order (S0,
+   S1 after its extra inserts, S5). Insertion sort, small n. */
 {
 	int i, j, r;
 
@@ -131,8 +142,6 @@ sort_by_key(void)
 			rid_by_pos[j] = rid_by_pos[j - 1];
 		rid_by_pos[j] = r;
 	}
-	for (i = 0; i < nkeys; i++)
-		pos_of[rid_by_pos[i]] = i;
 }
 
 static int
@@ -178,8 +187,8 @@ SPECIFICATIONS:
 *****************************************************************************/
 {
 	char seen[MAXKEYS];
-	int sd, rid, got, want, missing, dup, bad, unordered, lastpos, i;
-	int ordered, eof, firstmiss, endcode, known;
+	int sd, rid, got, want, missing, dup, bad, unordered, lastkey, i;
+	int ordered, eof, firstmiss, endcode, first;
 
 	ordered = (op == ALL || op == LESS_THAN || op == LESS_THAN_EQUAL);
 	memset(seen, 0, sizeof(seen));
@@ -192,8 +201,9 @@ SPECIFICATIONS:
 		return;
 	}
 
-	got = dup = bad = unordered = known = 0;
-	lastpos = -1;
+	got = dup = bad = unordered = 0;
+	first = 1;
+	lastkey = 0;
 	eof = 0;
 	endcode = 0;		/* 0: cut off after 2*nkeys+10 results */
 	while (got < 2 * nkeys + 10) {
@@ -204,19 +214,6 @@ SPECIFICATIONS:
 			break;
 		}
 		got++;
-		/*
-		 * Known bug, separate from A1 and fixed in its own commit:
-		 * a NE scan returns the excluded key too. The skip in
-		 * AM_FindNextEntry (amscan.c, "skip this value") does not
-		 * update nextvalue, so the deleted-record check right after
-		 * it undoes the skip. It happens on insert-built trees as
-		 * well. Until that fix, the excluded key coming back at most
-		 * once is reported as KNOWN; anything else still fails.
-		 */
-		if (op == NOT_EQUAL && rid < nkeys && key_of[rid] == value) {
-			known++;
-			continue;
-		}
 		if (rid >= nkeys || !wanted(op, key_of[rid], value)) {
 			bad++;		/* garbage, or a key that must not match */
 			continue;
@@ -224,10 +221,13 @@ SPECIFICATIONS:
 		if (seen[rid])
 			dup++;
 		seen[rid] = 1;
+		/* keys must not go down; the record ids of one key may come
+		   in any order */
 		if (ordered) {
-			if (pos_of[rid] < lastpos)
+			if (!first && key_of[rid] < lastkey)
 				unordered++;
-			lastpos = pos_of[rid];
+			lastkey = key_of[rid];
+			first = 0;
 		}
 	}
 
@@ -255,9 +255,6 @@ SPECIFICATIONS:
 		printf("  (cut off, no EOF)");
 	if (missing > 0)
 		printf("  first missing key %d", firstmiss);
-	if (known > 0)
-		printf("  KNOWN: excluded key returned %d time(s) (NE bug)",
-		       known);
 	printf("\n");
 
 	CHECK(eof);
@@ -265,8 +262,7 @@ SPECIFICATIONS:
 	CHECK(dup == 0);
 	CHECK(bad == 0);
 	CHECK(unordered == 0);
-	CHECK(known <= 1);
-	CHECK(got - known == want);
+	CHECK(got == want);
 	CHECK(AM_CloseIndexScan(sd) == AME_OK);
 }
 
@@ -324,18 +320,26 @@ reopen(int fd, int no)
 	return fd;
 }
 
+/*
+ * Duplicates for fill_leaf: the key dupkey (if dup_copies > 0) gets
+ * dup_copies extra record ids, numbered from dup_rid on.
+ */
+static int dupkey, dup_copies, dup_rid;
+
 static void
 fill_leaf(int fd, int page, int next, int first, int count)
 /****************************************************************************
 SPECIFICATIONS:
 	Write leaf "page" holding keys 10*first .. 10*(first+count-1)
 	(record ids first ..), next leaf "next" (AM_NULL_PAGE for the last),
-	and add the keys to the expected set.
+	and add the keys to the expected set. The key dupkey also gets
+	dup_copies more record ids, added to its list the way the AM adds
+	a record id to a key that is already there (status AM_FOUND).
 *****************************************************************************/
 {
 	AM_LEAFHEADER h;
 	char *buf;
-	int i, key;
+	int i, k, key;
 
 	CHECK(PF_GetThisPage(fd, page, &buf) == PFE_OK);
 	memset(buf, 0, PF_PAGE_SIZE);
@@ -347,6 +351,14 @@ SPECIFICATIONS:
 		CHECK(AM_InsertintoLeaf(buf, KEYLEN, (char *)&key, first + i,
 					i + 1, AM_NOT_FOUND) == TRUE);
 		add_key(key, first + i);
+		if (dup_copies > 0 && key == dupkey)
+			for (k = 0; k < dup_copies; k++) {
+				CHECK(AM_InsertintoLeaf(buf, KEYLEN,
+					(char *)&key, dup_rid, i + 1,
+					AM_FOUND) == TRUE);
+				add_key(key, dup_rid);
+				dup_rid++;
+			}
 	}
 	CHECK(PF_UnfixPage(fd, page, TRUE) == PFE_OK);
 }
@@ -508,6 +520,62 @@ s23(int no, int internal_first)
 	CHECK(AM_DestroyIndex(RELNAME, no) == AME_OK);
 }
 
+/*
+ * The NE cases of S4 and S5, on the S1 layout (4 leaves of 25 keys,
+ * leaf j holds 250*j .. 250*j+240). The value of each case is a key.
+ */
+#define NNE	5
+static const int ne_value[NNE] = { 370, 490, 500, 0, 990 };
+static const char *ne_case[NNE] = {
+	"(a) middle of leaf 2",
+	"(b) last of leaf 2",
+	"(c) first of leaf 3",
+	"(d) minimum",
+	"(d) maximum",
+};
+
+static void
+s45(int no, int copies)
+/****************************************************************************
+SPECIFICATIONS:
+	For each NE case: build a fresh index (number 10*no + case) in the
+	S1 layout, where the case's value has "copies" extra record ids, run
+	the NE scan on it, close the file (which fails if the scan left a
+	page fixed) and destroy it. With copies > 0 an EQ scan on the
+	value must also return all of its record ids.
+*****************************************************************************/
+{
+	int child[4] = { 1, 2, 3, 4 };
+	int minkey[4] = { 0, 250, 500, 750 };
+	char sc[64];
+	int c, i, fd, idx;
+
+	for (c = 0; c < NNE; c++) {
+		idx = 10 * no + c;
+		sprintf(sc, "S%d %s", no, ne_case[c]);
+		fd = open_new_index(idx);
+		if (fd < 0)
+			return;
+		nkeys = 0;
+		dupkey = ne_value[c];
+		dup_copies = copies;
+		dup_rid = 100;			/* after the 100 keys' own */
+		alloc_pages(fd, 4, 1);
+		for (i = 0; i < 4; i++)
+			fill_leaf(fd, 1 + i, i < 3 ? 2 + i : AM_NULL_PAGE,
+				  25 * i, 25);
+		fill_int(fd, 0, 4, child, minkey);
+		dup_copies = 0;
+		sort_by_key();
+		fd = reopen(fd, idx);
+		if (copies > 0)
+			check_scan(sc, fd, EQUAL, ne_value[c]);
+		check_scan(sc, fd, NOT_EQUAL, ne_value[c]);
+		CHECK(PF_CloseFile(fd) == PFE_OK);
+		CHECK(AM_DestroyIndex(RELNAME, idx) == AME_OK);
+	}
+}
+
 static int
 run(int no)
 /****************************************************************************
@@ -522,7 +590,7 @@ RETURN VALUE:
 {
 	char fname[64];
 	pid_t pid;
-	int status;
+	int status, i;
 
 	fflush(stdout);
 	pid = fork();
@@ -536,8 +604,10 @@ RETURN VALUE:
 			s0();
 		else if (no == 1)
 			s1();
-		else
+		else if (no <= 3)
 			s23(no, no == 3);
+		else
+			s45(no, no == 5 ? 2 : 0);	/* S5: 3 rids */
 		printf("S%d: %d checks, %d failed\n", no, ncheck, nfail);
 		fflush(stdout);
 		_exit(nfail > 0 ? 1 : 0);
@@ -546,8 +616,13 @@ RETURN VALUE:
 		printf("S%d: waitpid failed\n", no);
 		return 0;
 	}
+	/* files left behind if the child died or could not close them */
 	sprintf(fname, "%s.%d", RELNAME, no);
-	unlink(fname);			/* left behind if the child died */
+	unlink(fname);
+	for (i = 0; i < NNE; i++) {
+		sprintf(fname, "%s.%d", RELNAME, 10 * no + i);
+		unlink(fname);
+	}
 	if (WIFSIGNALED(status)) {
 		printf("S%d: FAILED, killed by signal %d (%s)\n", no,
 		       WTERMSIG(status), WTERMSIG(status) == SIGALRM ?
@@ -564,10 +639,10 @@ main(void)
 
 	PF_Init();
 	passed = 0;
-	for (no = 0; no <= 3; no++)
+	for (no = 0; no < NSCEN; no++)
 		passed += run(no);
-	printf("test_leftpage: %d of 4 scenarios passed\n", passed);
-	if (passed != 4)
+	printf("test_leftpage: %d of %d scenarios passed\n", passed, NSCEN);
+	if (passed != NSCEN)
 		return 1;
 	printf("test_leftpage done!\n");
 	return 0;

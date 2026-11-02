@@ -357,12 +357,22 @@ if (AM_scanTable[scanDesc].op == NOT_EQUAL)
     && (AM_scanTable[scanDesc].index == AM_scanTable[scanDesc].actindex))
        
        /*skip this value */
+       /* CHANGED [A3]: the skip moved the cursor to the next key but left
+       nextvalue holding the skipped key. The deleted-record check below
+       then saw a different key at nextIndex, took it for a deleted
+       record, moved back with nextIndex-- and returned the skipped key
+       after all (with every one of its record ids). The skip now updates
+       nextvalue like the normal advance further down does, so the check
+       sees an unchanged key. */
        if ((AM_scanTable[scanDesc].nextIndex + 1) <= (header->numKeys))
          {
           AM_scanTable[scanDesc].nextIndex++;
           AM_scanTable[scanDesc].actindex++;
           bcopy(pageBuf + AM_sl +  (AM_scanTable[scanDesc].nextIndex-1)*recSize
           + header->attrLength, &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
+          /* CHANGED [A3]: keep nextvalue in step with nextIndex */
+          bcopy(pageBuf + AM_sl + (AM_scanTable[scanDesc].nextIndex-1)*recSize,
+          AM_scanTable[scanDesc].nextvalue,header->attrLength);
          }
        else
           if (header->nextLeafPage == AM_NULL_PAGE)
@@ -378,9 +388,17 @@ if (AM_scanTable[scanDesc].op == NOT_EQUAL)
             bcopy(pageBuf + AM_sl + header->attrLength,
                &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
             bcopy(pageBuf,header,AM_sl);
+            /* CHANGED [A3]: header is already the new leaf's header here,
+            so header->nextLeafPage named the leaf after it, which is not
+            fixed: the unfix failed (AME_PF) and the new leaf stayed fixed.
+            Unfix the page fixed above, nextpageNum. */
             errVal = PF_UnfixPage(AM_scanTable[scanDesc].fileDesc
-                ,header->nextLeafPage,FALSE);
+                ,AM_scanTable[scanDesc].nextpageNum,FALSE);
             AM_Check;
+            /* CHANGED [A3]: keep nextvalue in step, as in the same-leaf
+            case above */
+            bcopy(pageBuf + AM_sl,AM_scanTable[scanDesc].nextvalue,
+               header->attrLength);
            }
 /* if not the first call to findnextentry , check if previous record has 
 been deleted */
