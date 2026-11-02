@@ -31,10 +31,29 @@ typedef struct PFftab_ele {
 	int unixfd;	/* unix file descriptor*/
 	PFhdr_str hdr;	/* file header */
 	short hdrchanged; /* TRUE if file header has changed */
+	/* CHANGED [P3]: replacement policy chosen at open time */
+	int policy;	/* PF_LRU or PF_MRU, see PF_OpenFileEx() */
+	/* CHANGED [P6]: I/O counters of this file, zeroed at open */
+	PFstats stats;	/* see PF_GetStats() for what each counts */
 } PFftab_ele;
 
+/* CHANGED [P3]: buf.c asks pf.c for the policy of a file through this,
+   since PFftab is static in pf.c */
+extern PFftabGetPolicy();
+
+/* CHANGED [P6]: statistics. PFtotStats is the global accumulator (defined
+   in pf.c), PFftabStats(fd) gives the counters of open file fd (a scratch
+   struct for an invalid fd, so the global count still happens).
+   PFstatInc() is two plain increments: no I/O, no allocation. */
+extern PFstats PFtotStats;
+extern PFstats *PFftabStats();
+#define PFstatInc(fd,field) (PFftabStats(fd)->field++, PFtotStats.field++)
+
 /************************** Buffer Page Decls *********************/
-#define PF_MAX_BUFS	20	/* max # of buffers */
+/* CHANGED [P1]: the pool size is set at runtime by PF_InitBuffer. PF_MAX_BUFS is
+   kept as the default size because testpf.c uses it (needs pf.h included first,
+   like PF_PAGE_SIZE above) */
+#define PF_MAX_BUFS	PF_DEFAULT_BUFS	/* default # of buffers */
 
 /* buffer page decl */
 typedef struct PFbpage {
@@ -43,7 +62,10 @@ typedef struct PFbpage {
 	struct PFbpage *prevpage;	/* previous in the linked list
 					of buffer pages */
 	short	dirty:1,		/* TRUE if page is dirty */
-		fixed:1;		/* TRUE if page is fixed in buffer*/
+		fixed:1,		/* TRUE if page is fixed in buffer*/
+	/* CHANGED [P6]: TRUE once a logical write was counted for this page
+	   since it was last fixed or loaded, so it is counted at most once */
+		lwcounted:1;
 	int	page;			/* page number of this page */
 	int	fd;			/* file desciptor of this page */
 	PFfpage fpage; /* page data from the file */
@@ -52,7 +74,8 @@ typedef struct PFbpage {
 
 
 /******************** Hash Table Decls ****************************/
-#define PF_HASH_TBL_SIZE	20	/* size of PF hash table */
+/* CHANGED [P2]: 20 -> 1031 (a prime) so big pools don't get long bucket chains */
+#define PF_HASH_TBL_SIZE	1031	/* size of PF hash table */
 
 /* Hash table bucket entries*/
 typedef struct PFhash_entry {
@@ -74,7 +97,10 @@ extern PFhashDelete();
 extern PFhashPrint();
 
 /****************** Interface functions from Buffer Manager *************/
-extern PFbufGet();
+extern PFbufGet();	/* CHANGED [P6]: new last argument "count", see buf.c */
 extern PFbufUnfix();
 extern PFbufalloc();
 extern PFbufReleaseFile();
+extern PFbufInit();	/* CHANGED [P1]: allocate the pool of n frames */
+extern PFbufMarkDirty();	/* CHANGED [P5]: set dirty bit only, for PF_MarkDirty */
+extern PFbufFlushAll();	/* CHANGED [P6]: write all dirty frames, for PF_FlushAll */

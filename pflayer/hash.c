@@ -184,10 +184,12 @@ PFhash_entry *entry;
 		if (PFhashtbl[i] == NULL)
 			printf("\tempty\n");
 		else{
+			/* CHANGED [P7]: bpage is a pointer, print it with %p
+			(it was passed to %d, wrong on 64-bit) */
 			for (entry = PFhashtbl[i]; entry != NULL;
 					entry = entry->nextentry)
-				printf("\tfd: %d, page: %d %d\n",
-					entry->fd, entry->page,entry->bpage);
+				printf("\tfd: %d, page: %d %p\n",
+					entry->fd, entry->page,(void *)entry->bpage);
 		}
 	}
 }
