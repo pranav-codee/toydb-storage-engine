@@ -218,8 +218,12 @@ HF_Insert(int fd, char *rec, int len)
 
 	page_number = 0;
 	slot = HF_PAGE_NOSPACE;
-	if (data_pages > 0) {
-		page_number = (int)data_pages;
+	/*
+	 * Before deletes, the last page was sufficient because earlier pages
+	 * could not gain space.  Deletes can free any page, so inspect each
+	 * existing page and reuse the first one with enough contiguous space.
+	 */
+	for (page_number = 1; page_number <= data_pages; page_number++) {
 		error = PF_GetThisPage(fd, page_number, &data_page);
 		if (error != PFE_OK)
 			return HFE_PF;
@@ -228,7 +232,8 @@ HF_Insert(int fd, char *rec, int len)
 			if (PF_UnfixPage(fd, page_number, FALSE) != PFE_OK)
 				return HFE_PF;
 		} else if (slot < 0) {
-			PF_UnfixPage(fd, page_number, FALSE);
+			if (PF_UnfixPage(fd, page_number, FALSE) != PFE_OK)
+				return HFE_PF;
 			return slot == HFE_TOOLONG ? HFE_TOOLONG : HFE_INVALID;
 		} else {
 			if (PF_UnfixPage(fd, page_number, TRUE) != PFE_OK)
@@ -260,4 +265,103 @@ update_header:
 	if (PF_UnfixPage(fd, 0, TRUE) != PFE_OK)
 		return HFE_PF;
 	return HF_RID(page_number, slot);
+}
+
+static int
+hf_decode_rid(int rid, long data_pages, int *page_number, int *slot)
+{
+	long page;
+
+	if (rid < 0 || page_number == NULL || slot == NULL)
+		return HFE_INVALID;
+	page = HF_RID_PAGE(rid);
+	if (page <= 0 || page > 0x7fffffffL)
+		return HFE_INVALID;
+	if (page > data_pages)
+		return HFE_NOTFOUND;
+	*page_number = (int)page;
+	*slot = HF_RID_SLOT(rid);
+	return HF_OK;
+}
+
+int
+HF_Get(int fd, int rid, char *buf, int *len)
+{
+	char *header_page;
+	char *data_page;
+	long data_pages;
+	long records;
+	int page_number;
+	int slot;
+	int error;
+	int result;
+
+	if (hf_find_fd(fd) < 0 || buf == NULL || len == NULL)
+		return HFE_INVALID;
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	error = HFInternal_ReadHeader(header_page, &data_pages, &records);
+	if (PF_UnfixPage(fd, 0, FALSE) != PFE_OK)
+		return HFE_PF;
+	if (error != HF_OK)
+		return HFE_PF;
+	error = hf_decode_rid(rid, data_pages, &page_number, &slot);
+	if (error != HF_OK)
+		return error;
+	error = PF_GetThisPage(fd, page_number, &data_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	result = HFPage_Read((unsigned char *)data_page, slot, buf, len);
+	if (PF_UnfixPage(fd, page_number, FALSE) != PFE_OK)
+		return HFE_PF;
+	return result;
+}
+
+int
+HF_Delete(int fd, int rid)
+{
+	char *header_page;
+	char *data_page;
+	long data_pages;
+	long records;
+	int page_number;
+	int slot;
+	int error;
+	int result;
+
+	if (hf_find_fd(fd) < 0)
+		return HFE_INVALID;
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	error = HFInternal_ReadHeader(header_page, &data_pages, &records);
+	if (PF_UnfixPage(fd, 0, FALSE) != PFE_OK)
+		return HFE_PF;
+	if (error != HF_OK)
+		return HFE_PF;
+	error = hf_decode_rid(rid, data_pages, &page_number, &slot);
+	if (error != HF_OK)
+		return error;
+	if (records <= 0)
+		return HFE_PF;
+	error = PF_GetThisPage(fd, page_number, &data_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	result = HFPage_Delete((unsigned char *)data_page, slot);
+	if (result != HF_OK) {
+		if (PF_UnfixPage(fd, page_number, FALSE) != PFE_OK)
+			return HFE_PF;
+		return result;
+	}
+	if (PF_UnfixPage(fd, page_number, TRUE) != PFE_OK)
+		return HFE_PF;
+
+	error = PF_GetThisPage(fd, 0, &header_page);
+	if (error != PFE_OK)
+		return HFE_PF;
+	HFInternal_WriteHeader(header_page, data_pages, records - 1);
+	if (PF_UnfixPage(fd, 0, TRUE) != PFE_OK)
+		return HFE_PF;
+	return HF_OK;
 }

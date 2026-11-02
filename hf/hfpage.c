@@ -129,7 +129,12 @@ int
 HFPage_Delete(unsigned char *page, int slot)
 {
 	int slots;
+	int data_start;
+	int offset;
+	int length;
+	int i;
 	unsigned char *entry;
+	unsigned char compacted[PF_PAGE_SIZE];
 
 	if (page == NULL || slot < 0)
 		return HFE_INVALID;
@@ -141,5 +146,26 @@ HFPage_Delete(unsigned char *page, int slot)
 		return HFE_NOTFOUND;
 	put_u16(entry, 0);
 	put_u16(entry + 2, 0);
+
+	/*
+	 * Repack live records so deletion returns their bytes to the gap.
+	 * Offsets are private to the page, so moving records does not change RIDs.
+	 */
+	memset(compacted, 0, sizeof(compacted));
+	data_start = PF_PAGE_SIZE;
+	for (i = 0; i < slots; i++) {
+		entry = slot_ptr(page, i);
+		offset = (int)get_u16(entry);
+		length = (int)get_u16(entry + 2);
+		if (offset == 0)
+			continue;
+		data_start -= length;
+		if (length > 0)
+			memcpy(compacted + data_start, page + offset, (size_t)length);
+		put_u16(entry, (unsigned short)data_start);
+	}
+	memcpy(page + data_start, compacted + data_start,
+	       (size_t)(PF_PAGE_SIZE - data_start));
+	put_u16(page + 2, (unsigned short)data_start);
 	return HF_OK;
 }

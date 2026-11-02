@@ -22,11 +22,25 @@ check(int condition, const char *message)
 	}
 }
 
+static unsigned long
+next_random(unsigned long *state)
+{
+	*state = *state * 1103515245UL + 12345UL;
+	return (*state >> 16) & 0x7fffUL;
+}
+
 int
 main(int argc, char **argv)
 {
+	struct model_record {
+		int rid;
+		int len;
+		int live;
+		char data[64];
+	};
 	char *page;
 	char *fname;
+	char *model_name;
 	int fd;
 	int pf_fd;
 	long data_pages;
@@ -36,6 +50,16 @@ main(int argc, char **argv)
 	int rids[40];
 	int i;
 	int j;
+	int model_count;
+	int live_count;
+	int choice;
+	int model_index;
+	int operation;
+	int result;
+	int got_len;
+	char got[HF_MAX_RECLEN];
+	unsigned long random_state;
+	struct model_record model[256];
 
 	fname = "test_hf.pf";
 	unlink(fname);
@@ -68,7 +92,79 @@ main(int argc, char **argv)
 	      "maximum-length insert");
 	check(HF_Insert(fd, record, HF_MAX_RECLEN + 1) == HFE_TOOLONG,
 	      "record above maximum rejected");
+	check(HF_Get(fd, rids[1], got, &got_len) == HF_OK &&
+	      got_len == 100 && memcmp(got, record, 100) == 0,
+	      "get returns inserted bytes");
+	check(HF_Delete(fd, rids[0]) == HF_OK, "delete");
+	check(HF_Get(fd, rids[0], got, &got_len) == HFE_NOTFOUND,
+	      "deleted record is not found");
+	check(HF_Delete(fd, rids[0]) == HFE_NOTFOUND,
+	      "repeated delete is not found");
+	check(HF_Get(fd, rids[1], got, &got_len) == HF_OK &&
+	      got_len == 100 && memcmp(got, record, 100) == 0,
+	      "other rid survives delete");
+	result = HF_Insert(fd, record, 100);
+	check(result == rids[0], "deleted slot and space are reused");
+	check(HF_Get(fd, -1, got, &got_len) == HFE_INVALID,
+	      "negative rid is invalid");
+	check(HF_Get(fd, 0, got, &got_len) == HFE_INVALID,
+	      "header-page rid is invalid");
+	check(HF_Get(fd, HF_RID(3, 0), got, &got_len) == HFE_NOTFOUND,
+	      "out-of-range page is not found");
 	check(HF_CloseFile(fd) == HF_OK, "close after reopen");
+
+	model_name = "test_hf_model.pf";
+	unlink(model_name);
+	check(HF_CreateFile(model_name) == HF_OK, "create model file");
+	fd = HF_OpenFile(model_name);
+	check(fd >= 0, "open model file");
+	memset(model, 0, sizeof(model));
+	model_count = 0;
+	live_count = 0;
+	random_state = 1234567UL;
+	for (operation = 0; operation < 300; operation++) {
+		choice = (int)(next_random(&random_state) % 100UL);
+		if (choice < 50 && model_count < 256) {
+			model[model_count].len =
+				(int)(next_random(&random_state) % 64UL);
+			for (i = 0; i < model[model_count].len; i++)
+				model[model_count].data[i] = (char)(operation + i);
+			model[model_count].rid = HF_Insert(fd, model[model_count].data,
+							   model[model_count].len);
+			check(model[model_count].rid >= 0, "model insert");
+			model[model_count].live = 1;
+			model_count++;
+			live_count++;
+		} else if (choice < 75 && live_count > 0) {
+			model_index = (int)(next_random(&random_state) %
+					    (unsigned long)model_count);
+			for (j = 0; j < model_count && !model[model_index].live; j++)
+				model_index = (model_index + 1) % model_count;
+			check(HF_Delete(fd, model[model_index].rid) == HF_OK,
+			      "model delete");
+			model[model_index].live = 0;
+			live_count--;
+		} else if (live_count > 0) {
+			model_index = (int)(next_random(&random_state) %
+					    (unsigned long)model_count);
+			for (j = 0; j < model_count && !model[model_index].live; j++)
+				model_index = (model_index + 1) % model_count;
+			check(HF_Get(fd, model[model_index].rid, got, &got_len) == HF_OK &&
+			      got_len == model[model_index].len &&
+			      memcmp(got, model[model_index].data, got_len) == 0,
+			      "model get");
+		}
+	}
+	for (i = 0; i < model_count; i++) {
+		if (model[i].live) {
+			check(HF_Get(fd, model[i].rid, got, &got_len) == HF_OK &&
+			      got_len == model[i].len &&
+			      memcmp(got, model[i].data, got_len) == 0,
+			      "final model get");
+		}
+	}
+	check(HF_CloseFile(fd) == HF_OK, "close model file");
+	check(PF_DestroyFile(model_name) == PFE_OK, "destroy model file");
 
 	fd = HF_OpenFile(fname);
 	check(fd >= 0, "reopen after inserts");
