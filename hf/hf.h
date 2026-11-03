@@ -32,10 +32,12 @@
  * Space statistics, with the same definitions for both layouts:
  * pages            = data pages in the file, excluding any header page
  * records          = live records
- * useful_bytes     = sum of record lengths (after truncation for the static
- *                    layout), without slot-directory or bitmap overhead
- * truncated        = records cut to the fixed length (static layout only,
- *                    0 otherwise)
+ * useful_bytes     = sum of the stored lengths of live records (after
+ *                    truncation for the static layout), without
+ *                    slot-directory or length-word overhead
+ * truncated        = live records that were cut to the fixed length at
+ *                    insert (static layout only, 0 otherwise); deleting
+ *                    such a record lowers it
  * records_per_page = records / pages
  * utilization      = useful_bytes / (pages * PF_PAGE_SIZE)
  */
@@ -131,9 +133,10 @@ int HF_StaticOpenFile(char *fname);
 int HF_StaticCloseFile(int fd);
 
 /*
- * Insert rec into the fixed-length file, truncating records longer than its
- * configured slot length and counting each truncation.  Return HF_OK or a
- * negative error.
+ * Insert rec into the fixed-length file.  A record longer than the slot
+ * length (but at most HF_MAX_RECLEN) is truncated to it and flagged as
+ * truncated; a longer one is rejected with HFE_TOOLONG.  Return HF_OK or
+ * a negative error.
  */
 int HF_StaticInsert(int fd, char *rec, int len);
 
@@ -143,7 +146,12 @@ int HF_StaticInsert(int fd, char *rec, int len);
  */
 int HF_StaticGetSpaceStats(int fd, HFSpaceStats *out);
 
-/* Static baseline record access and scans use the same RID encoding. */
+/*
+ * Static baseline record access and scans use the same RID encoding.
+ * HF_StaticGet and HF_StaticScanNext store the record's stored length
+ * (at most the slot length) in *len.  Closing a static file makes its
+ * open scans return HFE_INVALID; HF_StaticScanClose still releases them.
+ */
 int HF_StaticGet(int fd, int rid, char *buf, int *len);
 int HF_StaticDelete(int fd, int rid);
 int HF_StaticScanOpen(int fd);

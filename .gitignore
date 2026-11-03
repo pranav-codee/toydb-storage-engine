@@ -18,6 +18,7 @@ tests/test_hfpage
 tests/test_hf
 tests/test_hf_load
 tests/test_leftpage
+tests/test_hfstatic
 file1
 file2
 testrel.*

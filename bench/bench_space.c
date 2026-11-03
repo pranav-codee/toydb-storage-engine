@@ -239,6 +239,8 @@ run_static(struct input_record *records, int count, int length,
 	int selected;
 	int rid;
 	int len;
+	long useful;
+	long cut;
 	char buf[HF_MAX_RECLEN];
 	char fname[64];
 
@@ -256,6 +258,16 @@ run_static(struct input_record *records, int count, int length,
 			fail("static insert failed");
 	if (HF_StaticGetSpaceStats(fd, before) != HF_OK)
 		fail("static statistics failed");
+	useful = 0;
+	cut = 0;
+	for (i = 0; i < count; i++) {
+		useful += records[i].len < length ? records[i].len : length;
+		if (records[i].len > length)
+			cut++;
+	}
+	if (before->records != count || before->useful_bytes != useful ||
+	    before->truncated != cut)
+		fail("static statistics differ from the inserted records");
 	rids = (int *)malloc((size_t)(count > 0 ? count : 1) * sizeof(*rids));
 	indices = (int *)malloc((size_t)(count > 0 ? count : 1) *
 				sizeof(*indices));

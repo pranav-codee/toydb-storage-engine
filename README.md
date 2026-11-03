@@ -152,12 +152,23 @@ pass.
 
 ## Static layout and comparison
 
-The static baseline stores a fixed-length record in every slot. A data page
-has a four-byte slot-count header, a bit-packed occupancy map, and then the
-fixed-size slots. Thus a length `L` has the largest `n` satisfying
-`4 + ceil(n / 8) + n * L <= PF_PAGE_SIZE` slots per page. Records longer than
-`L` are truncated and counted. Static RIDs use the same
-`page * HF_RID_STRIDE + slot` encoding as the slotted file.
+The static baseline gives every record a fixed-size slot. A data page has a
+four-byte slot-count header followed by the slots; each slot is a two-byte
+length word and then `L` payload bytes. Bits 0 to 14 of the length word hold
+the stored length, bit 15 marks a record that was truncated at insert, and
+`0xFFFF` marks an empty slot. Thus
+
+```
+slots_per_page = floor((PF_PAGE_SIZE - 4) / (L + 2))
+```
+
+Records longer than `L` (up to `HF_MAX_RECLEN`) are truncated to `L` and
+flagged; longer ones are rejected with `HFE_TOOLONG`. `HF_StaticGet` and the
+scan return the stored length. The header page keeps the live record count,
+the number of live truncated records and the sum of stored lengths; insert
+and delete update them, so a delete lowers both `useful_bytes` and
+`truncated`. Closing a static file invalidates its open scans. Static RIDs
+use the same `page * HF_RID_STRIDE + slot` encoding as the slotted file.
 
 Both layouts use the same statistics: the header page is excluded,
 `useful_bytes` is the bytes actually stored, and
