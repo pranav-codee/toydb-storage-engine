@@ -171,9 +171,9 @@ Where: `amlayer/amprint.c:74`.
 
 ## 6. Process
 
-**D30. The setup commits (a624959 to 13e8988: import, Makefile, config parser, B2, frozen interfaces) were made directly on main. Every later change was made on its own branch and merged into main through a pull request with a merge commit (PR 1 to PR 5, PR 7); the static layout (4ea9e1b, f181c68) had no pull request of its own and was merged together with its review fixes in PR 7. Changes are verified by an independent check before merge (fresh clone, both config modes, sanitizers, adversarial review).**
+**D30. Code changes are made on their own branch and merged into main through a pull request with a merge commit. Only the initial setup commits and documentation-only commits are committed directly to main. Code changes are verified by an independent check before merge (fresh clone, both config modes, sanitizers, adversarial review).**
 Reason: a reviewable history, and no unverified code on main.
-Where: `git log --merges` (dc3ae7d, ba5870b, 5570c09, 92ceff1, 8e32c2a, 48b591d).
+Where: `git log --first-parent main`.
 
 **D31. `bench_space` and `test_hf_load` validate their input before producing output, and a failed benchmark run keeps the previous CSV.** `bench_space` checks every `static_lengths` value (1 to `HF_MAX_RECLEN`), an empty list and `churn_fraction` (0 to 1) before it loads data, prints anything or creates a file, and names the bad value. Both programs stop with the line number on a line that does not fit the read buffer or a record longer than `HF_MAX_RECLEN`, before any results are printed. `make bench-space` writes to `results/bench_space.csv.tmp` and renames it only on success.
 Reason: a partly written or silently wrong results file looks like a valid result.
