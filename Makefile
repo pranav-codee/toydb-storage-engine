@@ -41,7 +41,7 @@ TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_p
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
 	    tests/test_hfstatic \
-	    bench/bench_buffer
+	    bench/bench_buffer bench/bench_space
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -59,7 +59,7 @@ STRESS_BIN     = tests/stress_pool
 STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
 STRESS_TIMEOUT = 600
 
-.PHONY: all tests test stress bench plots clean
+.PHONY: all tests test stress bench bench-space plots clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -116,6 +116,9 @@ tests/stress_pool.o: $(PF_HDRS)
 bench/bench_buffer.o: bench/bench_buffer.c $(COMMON_HDRS) $(PF_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
 
+bench/bench_space.o: bench/bench_space.c hf/hf.h $(COMMON_HDRS) $(PF_HDRS)
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
 tests: $(TEST_BINS)
 
 $(AM_TESTS): %: %.o $(AM)/misc.o $(AM)/amlayer.o $(PF)/pflayer.o
@@ -167,6 +170,17 @@ $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 # config.o comes in through pflayer.o, like test_pool
 bench/bench_buffer: bench/bench_buffer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
+
+bench/bench_space: bench/bench_space.o hf/hf.o hf/hfpage.o hf/hfstatic.o \
+		$(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+bench-space: bench/bench_space
+	@mkdir -p results; \
+	TOYDB_ROOT="$(CURDIR)" bench/bench_space "conf=$(CURDIR)/toydb.conf" \
+		> results/bench_space.csv || { rm -f results/bench_space.csv; \
+		echo "make bench-space: FAILED"; exit 1; }; \
+	echo "make bench-space: results/bench_space.csv"
 
 # The provided test mains have no return statement, so exit codes are garbage.
 # A program passes only if its last output line is the expected "done!" line.
@@ -221,6 +235,8 @@ test: tests
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
+	check bench/bench_space last "bench_space check done!" \
+		"conf=$(CURDIR)/toydb.conf" check; \
 	check tests/test_hfstatic last "test_hfstatic done!"; \
 	check tests/test_leftpage last "test_leftpage done!"; \
 	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \

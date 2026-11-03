@@ -73,14 +73,20 @@ static_find_fd(int fd)
 static int
 static_slots(int record_length)
 {
-	return (PF_PAGE_SIZE - HF_STATIC_PAGE_HEADER_SIZE) /
-		(record_length + 1);
+	int slots;
+
+	slots = (PF_PAGE_SIZE - HF_STATIC_PAGE_HEADER_SIZE) / record_length;
+	while (slots > 0 &&
+	       HF_STATIC_PAGE_HEADER_SIZE + (slots + 7) / 8 +
+	       slots * record_length > PF_PAGE_SIZE)
+		slots--;
+	return slots;
 }
 
 static int
 static_page_header_size(int slots)
 {
-	return HF_STATIC_PAGE_HEADER_SIZE + slots;
+	return HF_STATIC_PAGE_HEADER_SIZE + (slots + 7) / 8;
 }
 
 static int
@@ -100,15 +106,28 @@ static_init_page(char *page, int slots)
 static int
 static_page_has_slot(const char *page, int slot, int slots)
 {
+	int byte;
+	int bit;
+
 	if (slot < 0 || slot >= slots)
 		return 0;
-	return (unsigned char)page[HF_STATIC_PAGE_HEADER_SIZE + slot] != 0;
+	byte = HF_STATIC_PAGE_HEADER_SIZE + slot / 8;
+	bit = slot % 8;
+	return ((unsigned char)page[byte] & (1U << bit)) != 0;
 }
 
 static void
 static_page_set_slot(char *page, int slot, int occupied)
 {
-	page[HF_STATIC_PAGE_HEADER_SIZE + slot] = (char)(occupied != 0);
+	int byte;
+	int bit;
+
+	byte = HF_STATIC_PAGE_HEADER_SIZE + slot / 8;
+	bit = slot % 8;
+	if (occupied)
+		page[byte] = (char)((unsigned char)page[byte] | (1U << bit));
+	else
+		page[byte] = (char)((unsigned char)page[byte] & ~(1U << bit));
 }
 
 static char *

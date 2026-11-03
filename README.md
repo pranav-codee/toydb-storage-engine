@@ -145,6 +145,47 @@ left for later.
 root. If the file is missing, the test prints SKIPPED and still counts as a
 pass.
 
+## Static layout and comparison
+
+The static baseline stores a fixed-length record in every slot. A data page
+has a four-byte slot-count header, a bit-packed occupancy map, and then the
+fixed-size slots. Thus a length `L` has the largest `n` satisfying
+`4 + ceil(n / 8) + n * L <= PF_PAGE_SIZE` slots per page. Records longer than
+`L` are truncated and counted. Static RIDs use the same
+`page * HF_RID_STRIDE + slot` encoding as the slotted file.
+
+Both layouts use the same statistics: the header page is excluded,
+`useful_bytes` is the bytes actually stored, and
+`utilization = useful_bytes / (data_pages * PF_PAGE_SIZE)`. Run the full
+comparison with:
+
+```
+make bench-space
+```
+
+This writes `results/bench_space.csv`. The CSV contains full-load and
+delete/reinsert churn rows for the slotted layout and every configured static
+length. The churn experiment selects `churn_fraction` of the records with the
+configured `seed`. With the supplied 17,813-record data file, the full-load
+rows were:
+
+| layout | L | records | truncated | data pages | useful bytes | records/page | utilization |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| slotted | 0 | 17813 | 0 | 458 | 1776824 | 38 | 0.947150 |
+| static | 100 | 17813 | 7213 | 446 | 1781300 | 39 | 0.975085 |
+| static | 104 | 17813 | 489 | 457 | 1852552 | 38 | 0.989679 |
+| static | 110 | 17813 | 0 | 482 | 1959430 | 36 | 0.992482 |
+| static | 128 | 17813 | 0 | 575 | 2280064 | 30 | 0.968098 |
+| static | 160 | 17813 | 0 | 713 | 2850080 | 24 | 0.975905 |
+| static | 200 | 17813 | 0 | 891 | 3562600 | 19 | 0.976179 |
+| static | 256 | 17813 | 0 | 1188 | 4560128 | 14 | 0.937132 |
+
+The slot arithmetic gives 40, 39, 37, 31, 25, 20, and 15 slots per page
+for lengths 100, 104, 110, 128, 160, 200, and 256 respectively, producing
+the measured page counts. The churn rows have the same page counts and
+utilization; static truncation counts increase when truncated records are
+reinserted.
+
 # Part 3 B+ tree
 
 TODO: Describe index construction, bulk loading, and query measurements.
