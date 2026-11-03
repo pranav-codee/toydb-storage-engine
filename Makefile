@@ -40,6 +40,7 @@ AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
+	    tests/test_hfstatic \
 	    bench/bench_buffer
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
@@ -86,6 +87,9 @@ hf/hfpage.o: hf/hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
 hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
+hf/hfstatic.o: hf/hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
 tests/%.o: tests/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
 
@@ -99,6 +103,8 @@ tests/test_hf.o: tests/test_hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
 tests/test_leftpage.o: tests/test_leftpage.c $(AM_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) -c $< -o $@
 tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
@@ -150,6 +156,9 @@ tests/test_leftpage: tests/test_leftpage.o $(AM)/amlayer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_hf_load: tests/test_hf_load.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+tests/test_hfstatic: tests/test_hfstatic.o hf/hfstatic.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
@@ -212,6 +221,7 @@ test: tests
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
+	check tests/test_hfstatic last "test_hfstatic done!"; \
 	check tests/test_leftpage last "test_leftpage done!"; \
 	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \
 	if [ $$fail -ne 0 ]; then \

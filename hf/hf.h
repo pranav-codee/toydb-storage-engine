@@ -143,4 +143,11 @@ int HF_StaticInsert(int fd, char *rec, int len);
  */
 int HF_StaticGetSpaceStats(int fd, HFSpaceStats *out);
 
+/* Static baseline record access and scans use the same RID encoding. */
+int HF_StaticGet(int fd, int rid, char *buf, int *len);
+int HF_StaticDelete(int fd, int rid);
+int HF_StaticScanOpen(int fd);
+int HF_StaticScanNext(int scanfd, char *buf, int *len, int *rid);
+int HF_StaticScanClose(int scanfd);
+
 #endif /* HF_H */
