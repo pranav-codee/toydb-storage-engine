@@ -179,28 +179,39 @@ comparison with:
 make bench-space
 ```
 
-This writes `results/bench_space.csv`. The CSV contains full-load and
-delete/reinsert churn rows for the slotted layout and every configured static
-length. The churn experiment selects `churn_fraction` of the records with the
-configured `seed`. With the supplied 17,813-record data file, the full-load
-rows were:
+This writes `results/bench_space.csv` (through a temporary file, so a failed
+run leaves the previous CSV in place). Every value in `static_lengths` must be
+in `1..HF_MAX_RECLEN` and `churn_fraction` in `0..1`; otherwise the program
+names the bad value and exits with status 1 before it prints or creates
+anything. `student.txt` has CRLF line endings, and `bench_space` strips them
+like `test_hf_load`, so each record is exactly the line content. The CSV
+contains full-load and delete/reinsert churn rows for the slotted layout and
+every configured static length. The churn experiment deletes
+`churn_fraction` of the records, chosen with the configured `seed`, and
+inserts the same records again. With the supplied 17,813-record data file,
+the full-load rows were:
 
 | layout | L | records | truncated | data pages | useful bytes | records/page | utilization |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| slotted | 0 | 17813 | 0 | 458 | 1776824 | 38 | 0.947150 |
-| static | 100 | 17813 | 7213 | 446 | 1781300 | 39 | 0.975085 |
-| static | 104 | 17813 | 489 | 457 | 1852552 | 38 | 0.989679 |
-| static | 110 | 17813 | 0 | 482 | 1959430 | 36 | 0.992482 |
-| static | 128 | 17813 | 0 | 575 | 2280064 | 30 | 0.968098 |
-| static | 160 | 17813 | 0 | 713 | 2850080 | 24 | 0.975905 |
-| static | 200 | 17813 | 0 | 891 | 3562600 | 19 | 0.976179 |
-| static | 256 | 17813 | 0 | 1188 | 4560128 | 14 | 0.937132 |
+| slotted | 0 | 17813 | 0 | 452 | 1759011 | 39 | 0.950102 |
+| static | 100 | 17813 | 5749 | 446 | 1748550 | 39 | 0.957157 |
+| static | 104 | 17813 | 159 | 469 | 1758761 | 37 | 0.915533 |
+| static | 110 | 17813 | 0 | 495 | 1759011 | 35 | 0.867568 |
+| static | 128 | 17813 | 0 | 575 | 1759011 | 30 | 0.746863 |
+| static | 160 | 17813 | 0 | 713 | 1759011 | 24 | 0.602309 |
+| static | 200 | 17813 | 0 | 891 | 1759011 | 19 | 0.481982 |
+| static | 256 | 17813 | 0 | 1188 | 1759011 | 14 | 0.361487 |
 
-The slot arithmetic gives 40, 39, 37, 31, 25, 20, and 15 slots per page
-for lengths 100, 104, 110, 128, 160, 200, and 256 respectively, producing
-the measured page counts. The churn rows have the same page counts and
-utilization; static truncation counts increase when truncated records are
-reinserted.
+The slot formula gives 40, 38, 36, 31, 25, 20, and 15 slots per page for
+lengths 100, 104, 110, 128, 160, 200, and 256, which produces the measured
+page counts (`ceil(17813 / slots)`). `records/page` is
+`floor(records / pages)`, an average over the file, not the slot capacity of
+a page. The longest record is 108 bytes, so every static length of 108 or
+more stores all bytes and only the page count grows; at 100 and 104 the
+utilization is higher only because 5,749 and 159 records lost bytes. Every
+churn row equals its full-load row: the same records go back in, so records,
+stored bytes and the truncation count are unchanged (the benchmark asserts
+this), and the freed slots or page space are reused without new pages.
 
 # Part 3 B+ tree
 

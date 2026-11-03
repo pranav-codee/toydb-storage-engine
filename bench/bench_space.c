@@ -219,6 +219,9 @@ run_slotted(struct input_record *records, int count, double fraction,
 			fail("slotted churn insert failed");
 	if (HF_GetSpaceStats(fd, after) != HF_OK)
 		fail("slotted churn statistics failed");
+	if (after->records != before->records ||
+	    after->useful_bytes != before->useful_bytes)
+		fail("slotted churn changed records or useful_bytes");
 	if (HF_CloseFile(fd) != HF_OK || PF_DestroyFile(fname) != PFE_OK)
 		fail("slotted cleanup failed");
 	free(rids);
@@ -296,6 +299,11 @@ run_static(struct input_record *records, int count, int length,
 			fail("static churn insert failed");
 	if (HF_StaticGetSpaceStats(fd, after) != HF_OK)
 		fail("static churn statistics failed");
+	/* the same records went back in, so nothing stored may differ */
+	if (after->records != before->records ||
+	    after->useful_bytes != before->useful_bytes ||
+	    after->truncated != before->truncated)
+		fail("static churn changed records, useful_bytes or truncated");
 	if (HF_StaticCloseFile(fd) != HF_OK || PF_DestroyFile(fname) != PFE_OK)
 		fail("static cleanup failed");
 	free(rids);
@@ -308,13 +316,17 @@ check_mode(void)
 {
 	HFSpaceStats slotted;
 	HFSpaceStats fixed;
+	HFSpaceStats mixed;
 	char record[10];
+	char long_record[HF_MAX_RECLEN];
+	int len;
 	int fd;
 	int i;
 	char slotted_name[] = "bench_space_check_hf.pf";
 	char static_name[] = "bench_space_check_static.pf";
 
 	memset(record, 'x', sizeof(record));
+	memset(long_record, 'y', sizeof(long_record));
 	unlink(slotted_name);
 	if (HF_CreateFile(slotted_name) != HF_OK)
 		return 1;
@@ -347,8 +359,48 @@ check_mode(void)
 		return 1;
 	if (HF_StaticCloseFile(fd) != HF_OK || PF_DestroyFile(static_name) != PFE_OK)
 		return 1;
-	printf("bench_space check: slotted pages=%ld static pages=%ld\n",
-	       slotted.pages, fixed.pages);
+
+	/*
+	 * L = 10 with records of 3, 10, 15 and 0 bytes: the 15-byte one is
+	 * cut to 10, so useful = 3 + 10 + 10 + 0 = 23 and truncated = 1.
+	 * Deleting it gives 3 records, 13 bytes, 0 truncated; inserting it
+	 * again goes back to 4, 23, 1.  All fit on one page (341 slots).
+	 */
+	unlink(static_name);
+	if (HF_StaticCreateFile(static_name, 10) != HF_OK)
+		return 1;
+	fd = HF_StaticOpenFile(static_name);
+	if (fd < 0)
+		return 1;
+	if (HF_StaticInsert(fd, record, 3) != HF_OK ||
+	    HF_StaticInsert(fd, record, 10) != HF_OK ||
+	    HF_StaticInsert(fd, long_record, 15) != HF_OK ||
+	    HF_StaticInsert(fd, record, 0) != HF_OK)
+		return 1;
+	if (HF_StaticGetSpaceStats(fd, &mixed) != HF_OK ||
+	    mixed.pages != 1 || mixed.records != 4 ||
+	    mixed.useful_bytes != 23 || mixed.truncated != 1 ||
+	    mixed.utilization != 23.0 / (double)PF_PAGE_SIZE)
+		return 1;
+	/* slot 2 of page 1 holds the truncated record */
+	if (HF_StaticGet(fd, HF_RID(1, 2), long_record, &len) != HF_OK ||
+	    len != 10 || HF_StaticDelete(fd, HF_RID(1, 2)) != HF_OK)
+		return 1;
+	if (HF_StaticGetSpaceStats(fd, &mixed) != HF_OK ||
+	    mixed.records != 3 || mixed.useful_bytes != 13 ||
+	    mixed.truncated != 0)
+		return 1;
+	memset(long_record, 'y', sizeof(long_record));
+	if (HF_StaticInsert(fd, long_record, 15) != HF_OK ||
+	    HF_StaticGetSpaceStats(fd, &mixed) != HF_OK ||
+	    mixed.pages != 1 || mixed.records != 4 ||
+	    mixed.useful_bytes != 23 || mixed.truncated != 1)
+		return 1;
+	if (HF_StaticCloseFile(fd) != HF_OK || PF_DestroyFile(static_name) != PFE_OK)
+		return 1;
+	printf("bench_space check: slotted pages=%ld static pages=%ld "
+	       "mixed useful=%ld truncated=%ld\n", slotted.pages, fixed.pages,
+	       mixed.useful_bytes, mixed.truncated);
 	printf("bench_space check done!\n");
 	return 0;
 }
@@ -379,6 +431,26 @@ main(int argc, char **argv)
 			check = 1;
 	if (check)
 		return check_mode();
+	/* validate the whole configuration before any output or file */
+	length_count = Config_GetIntList("static_lengths", lengths,
+					 CONFIG_MAXLIST,
+					 "100,104,110,128,160,200,256");
+	if (length_count <= 0)
+		fail("static_lengths: the list is empty");
+	for (i = 0; i < length_count; i++)
+		if (lengths[i] < 1 || lengths[i] > HF_MAX_RECLEN) {
+			fprintf(stderr, "bench_space: static_lengths: L=%d is "
+				"outside 1..%d (HF_MAX_RECLEN)\n", lengths[i],
+				HF_MAX_RECLEN);
+			exit(1);
+		}
+	fraction = Config_GetDouble("churn_fraction", 0.3);
+	if (fraction < 0.0 || fraction > 1.0) {
+		fprintf(stderr, "bench_space: churn_fraction: %g is outside "
+			"0..1\n", fraction);
+		exit(1);
+	}
+	seed = (unsigned long)Config_GetInt("seed", 42);
 	data_file = Config_GetStr("data_file", "../data/student.txt");
 	if (load_input(&records, &count, data_file) != 0) {
 		printf("bench_space: data file not found at %s, SKIPPED\n",
@@ -386,13 +458,6 @@ main(int argc, char **argv)
 		printf("bench_space done!\n");
 		return 0;
 	}
-	length_count = Config_GetIntList("static_lengths", lengths,
-					 CONFIG_MAXLIST,
-					 "100,104,110,128,160,200,256");
-	fraction = Config_GetDouble("churn_fraction", 0.3);
-	seed = (unsigned long)Config_GetInt("seed", 42);
-	if (fraction < 0.0 || fraction > 1.0 || length_count <= 0)
-		fail("invalid static or churn configuration");
 	printf("layout,L,records,truncated,data_pages,useful_bytes,"
 	       "records_per_page,utilization\n");
 	run_slotted(records, count, fraction, seed, &before, &after);

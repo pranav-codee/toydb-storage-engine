@@ -175,11 +175,15 @@ bench/bench_space: bench/bench_space.o hf/hf.o hf/hfpage.o hf/hfstatic.o \
 		$(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
+# the CSV is written to a temporary file and renamed only on success, so a
+# failed run leaves the previous results/bench_space.csv as it was
 bench-space: bench/bench_space
 	@mkdir -p results; \
 	TOYDB_ROOT="$(CURDIR)" bench/bench_space "conf=$(CURDIR)/toydb.conf" \
-		> results/bench_space.csv || { rm -f results/bench_space.csv; \
-		echo "make bench-space: FAILED"; exit 1; }; \
+		> results/bench_space.csv.tmp || { rm -f results/bench_space.csv.tmp; \
+		echo "make bench-space: FAILED, results/bench_space.csv unchanged"; \
+		exit 1; }; \
+	mv results/bench_space.csv.tmp results/bench_space.csv; \
 	echo "make bench-space: results/bench_space.csv"
 
 # The provided test mains have no return statement, so exit codes are garbage.
