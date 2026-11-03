@@ -41,8 +41,8 @@ AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
-	    tests/test_hfstatic \
-	    tests/test_ambulk bench/bench_buffer bench/bench_space
+	    tests/test_hfstatic tests/test_ambulk tests/test_bulk \
+	    bench/bench_buffer bench/bench_space
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -110,6 +110,9 @@ tests/test_leftpage.o: tests/test_leftpage.c $(AM_HDRS)
 tests/test_ambulk.o: tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
+tests/test_bulk.o: tests/test_bulk.c tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
+	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
+		$(NEWINC) -c $< -o $@
 tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
@@ -173,6 +176,9 @@ tests/test_hfstatic: tests/test_hfstatic.o hf/hfstatic.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
 tests/test_ambulk: tests/test_ambulk.o $(AM)/amlayer.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+tests/test_bulk: tests/test_bulk.o $(AM)/amlayer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
@@ -251,6 +257,7 @@ test: tests
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
 	check tests/test_ambulk last "test_ambulk done!"; \
+	check tests/test_bulk last "test_ambulk done!"; \
 	check bench/bench_space last "bench_space check done!" \
 		"conf=$(CURDIR)/toydb.conf" check; \
 	check tests/test_hfstatic last "test_hfstatic done!"; \
