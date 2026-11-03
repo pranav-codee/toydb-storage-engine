@@ -133,12 +133,17 @@ space statistics exclude the metadata page:
 - `records_per_page` is `records / pages`;
 - `utilization` is `useful_bytes / (pages * PF_PAGE_SIZE)`.
 
-Loading the configured student dataset produced 17,813 records, 1,776,824
-useful bytes, and a longest record of 109 bytes. The slotted file used 458
-data pages, with 38 records per page (integer division) and 94.715% space
-utilization (`1,776,824 / (458 * 4,096)`). This is approximately the
-expected 459 pages and 94.5% utilization. The static-layout comparison is
-left for later.
+`student.txt` has CRLF line endings; the loader strips the `"\r\n"` (or
+`"\n"`), so a record is exactly the line content. A line too long for the
+loader's read buffer is reported with its line number instead of being
+split. Loading the configured student dataset produced 17,813 records,
+1,759,011 useful bytes, and a longest record of 108 bytes. The slotted file
+used 452 data pages, with 39 records per page (integer division) and 95.010%
+space utilization (`1,759,011 / (452 * 4,096)`). `test_hf_load` checks
+invariants rather than fixed numbers: every inserted record reads back
+byte-equal by its RID and in a full scan, the scan count equals the inserted
+count and the `records` statistic, `useful_bytes` equals the sum of the
+inserted lengths, and the utilization formula holds.
 
 `tests/test_hf_load` needs the data file at the path given by `data_file` in
 `toydb.conf`; under `make test` a relative path is resolved against the repo

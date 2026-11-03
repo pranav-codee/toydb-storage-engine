@@ -30,17 +30,47 @@ next_random(unsigned long *state)
 	return (*state >> 16) & 0x7fffUL;
 }
 
+/*
+ * Read one line into buf and strip its line ending ("\r\n", "\n", or a
+ * lone trailing "\r"; student.txt uses CRLF).  A line that does not fit
+ * in buf is an error: it would otherwise be split into pieces that the
+ * field check drops silently.  Return 1 for a line, 0 at end of file.
+ */
 static int
-student_record(char *line)
+read_line(FILE *input, char *buf, int size, long lineno)
+{
+	char *p;
+	int c;
+	int len;
+
+	if (fgets(buf, size, input) == NULL)
+		return 0;
+	p = strchr(buf, '\n');
+	if (p != NULL) {
+		*p = '\0';
+	} else {
+		c = getc(input);
+		if (c != EOF) {
+			fprintf(stderr, "bench_space: line %ld does not fit the "
+				"%d-byte read buffer\n", lineno, size);
+			exit(1);
+		}
+	}
+	len = (int)strlen(buf);
+	if (len > 0 && buf[len - 1] == '\r')
+		buf[len - 1] = '\0';
+	return 1;
+}
+
+/* a student record has exactly 16 ';'-separated fields */
+static int
+student_record(const char *line)
 {
 	int fields;
-	char *p;
+	const char *p;
 
 	if (line[0] == '\0')
 		return 0;
-	p = strchr(line, '\n');
-	if (p != NULL)
-		*p = '\0';
 	fields = 1;
 	for (p = line; *p != '\0'; p++)
 		if (*p == ';')
@@ -66,6 +96,7 @@ load_input(struct input_record **out, int *count, const char *data_file)
 	int capacity;
 	int len;
 	int n;
+	long lineno;
 	char path[4096];
 	const char *root;
 
@@ -85,12 +116,17 @@ load_input(struct input_record **out, int *count, const char *data_file)
 	if (records == NULL)
 		fail("input allocation failed");
 	n = 0;
-	while (fgets(line, sizeof(line), input) != NULL) {
+	lineno = 0;
+	while (read_line(input, line, (int)sizeof(line), lineno + 1)) {
+		lineno++;
 		if (!student_record(line))
 			continue;
 		len = (int)strlen(line);
-		if (len > HF_MAX_RECLEN)
-			fail("input record exceeds HF_MAX_RECLEN");
+		if (len > HF_MAX_RECLEN) {
+			fprintf(stderr, "bench_space: line %ld: input record "
+				"exceeds HF_MAX_RECLEN\n", lineno);
+			exit(1);
+		}
 		if (n == capacity) {
 			capacity *= 2;
 			records = (struct input_record *)realloc(records,
@@ -145,6 +181,7 @@ run_slotted(struct input_record *records, int count, double fraction,
 	int fd;
 	int i;
 	int selected;
+	long useful;
 	char fname[] = "bench_space_slotted.pf";
 
 	unlink(fname);
@@ -153,8 +190,9 @@ run_slotted(struct input_record *records, int count, double fraction,
 	fd = HF_OpenFile(fname);
 	if (fd < 0)
 		fail("slotted open failed");
-	rids = (int *)malloc((size_t)count * sizeof(*rids));
-	indices = (int *)malloc((size_t)count * sizeof(*indices));
+	rids = (int *)malloc((size_t)(count > 0 ? count : 1) * sizeof(*rids));
+	indices = (int *)malloc((size_t)(count > 0 ? count : 1) *
+				sizeof(*indices));
 	if (rids == NULL || indices == NULL)
 		fail("slotted churn allocation failed");
 	for (i = 0; i < count; i++) {
@@ -165,6 +203,11 @@ run_slotted(struct input_record *records, int count, double fraction,
 	}
 	if (HF_GetSpaceStats(fd, before) != HF_OK)
 		fail("slotted statistics failed");
+	useful = 0;
+	for (i = 0; i < count; i++)
+		useful += records[i].len;
+	if (before->records != count || before->useful_bytes != useful)
+		fail("slotted statistics differ from the inserted records");
 	selected = churn_count(count, fraction);
 	shuffle_indices(indices, count, &seed);
 	for (i = 0; i < selected; i++)
@@ -213,8 +256,9 @@ run_static(struct input_record *records, int count, int length,
 			fail("static insert failed");
 	if (HF_StaticGetSpaceStats(fd, before) != HF_OK)
 		fail("static statistics failed");
-	rids = (int *)malloc((size_t)count * sizeof(*rids));
-	indices = (int *)malloc((size_t)count * sizeof(*indices));
+	rids = (int *)malloc((size_t)(count > 0 ? count : 1) * sizeof(*rids));
+	indices = (int *)malloc((size_t)(count > 0 ? count : 1) *
+				sizeof(*indices));
 	if (rids == NULL || indices == NULL)
 		fail("static churn allocation failed");
 	scanfd = HF_StaticScanOpen(fd);
@@ -330,8 +374,6 @@ main(int argc, char **argv)
 		printf("bench_space done!\n");
 		return 0;
 	}
-	if (count != 17813)
-		fail("dataset record count differs");
 	length_count = Config_GetIntList("static_lengths", lengths,
 					 CONFIG_MAXLIST,
 					 "100,104,110,128,160,200,256");
