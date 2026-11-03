@@ -133,17 +133,85 @@ space statistics exclude the metadata page:
 - `records_per_page` is `records / pages`;
 - `utilization` is `useful_bytes / (pages * PF_PAGE_SIZE)`.
 
-Loading the configured student dataset produced 17,813 records, 1,776,824
-useful bytes, and a longest record of 109 bytes. The slotted file used 458
-data pages, with 38 records per page (integer division) and 94.715% space
-utilization (`1,776,824 / (458 * 4,096)`). This is approximately the
-expected 459 pages and 94.5% utilization. The static-layout comparison is
-left for later.
+`student.txt` has CRLF line endings; the loader strips the `"\r\n"` (or
+`"\n"`), so a record is exactly the line content. A line too long for the
+loader's read buffer is reported with its line number instead of being
+split. Loading the configured student dataset produced 17,813 records,
+1,759,011 useful bytes, and a longest record of 108 bytes. The slotted file
+used 452 data pages, with 39 records per page (integer division) and 95.010%
+space utilization (`1,759,011 / (452 * 4,096)`). `test_hf_load` checks
+invariants rather than fixed numbers: every inserted record reads back
+byte-equal by its RID and in a full scan, the scan count equals the inserted
+count and the `records` statistic, `useful_bytes` equals the sum of the
+inserted lengths, and the utilization formula holds.
 
 `tests/test_hf_load` needs the data file at the path given by `data_file` in
 `toydb.conf`; under `make test` a relative path is resolved against the repo
 root. If the file is missing, the test prints SKIPPED and still counts as a
 pass.
+
+## Static layout and comparison
+
+The static baseline gives every record a fixed-size slot. A data page has a
+four-byte slot-count header followed by the slots; each slot is a two-byte
+length word and then `L` payload bytes. Bits 0 to 14 of the length word hold
+the stored length, bit 15 marks a record that was truncated at insert, and
+`0xFFFF` marks an empty slot. Thus
+
+```
+slots_per_page = floor((PF_PAGE_SIZE - 4) / (L + 2))
+```
+
+Records longer than `L` (up to `HF_MAX_RECLEN`) are truncated to `L` and
+flagged; longer ones are rejected with `HFE_TOOLONG`. `HF_StaticGet` and the
+scan return the stored length. The header page keeps the live record count,
+the number of live truncated records and the sum of stored lengths; insert
+and delete update them, so a delete lowers both `useful_bytes` and
+`truncated`. Closing a static file invalidates its open scans. Static RIDs
+use the same `page * HF_RID_STRIDE + slot` encoding as the slotted file.
+
+Both layouts use the same statistics: the header page is excluded,
+`useful_bytes` is the bytes actually stored, and
+`utilization = useful_bytes / (data_pages * PF_PAGE_SIZE)`. Run the full
+comparison with:
+
+```
+make bench-space
+```
+
+This writes `results/bench_space.csv` (through a temporary file, so a failed
+run leaves the previous CSV in place). Every value in `static_lengths` must be
+in `1..HF_MAX_RECLEN` and `churn_fraction` in `0..1`; otherwise the program
+names the bad value and exits with status 1 before it prints or creates
+anything. `student.txt` has CRLF line endings, and `bench_space` strips them
+like `test_hf_load`, so each record is exactly the line content. The CSV
+contains full-load and delete/reinsert churn rows for the slotted layout and
+every configured static length. The churn experiment deletes
+`churn_fraction` of the records, chosen with the configured `seed`, and
+inserts the same records again. With the supplied 17,813-record data file,
+the full-load rows were:
+
+| layout | L | records | truncated | data pages | useful bytes | records/page | utilization |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| slotted | 0 | 17813 | 0 | 452 | 1759011 | 39 | 0.950102 |
+| static | 100 | 17813 | 5749 | 446 | 1748550 | 39 | 0.957157 |
+| static | 104 | 17813 | 159 | 469 | 1758761 | 37 | 0.915533 |
+| static | 110 | 17813 | 0 | 495 | 1759011 | 35 | 0.867568 |
+| static | 128 | 17813 | 0 | 575 | 1759011 | 30 | 0.746863 |
+| static | 160 | 17813 | 0 | 713 | 1759011 | 24 | 0.602309 |
+| static | 200 | 17813 | 0 | 891 | 1759011 | 19 | 0.481982 |
+| static | 256 | 17813 | 0 | 1188 | 1759011 | 14 | 0.361487 |
+
+The slot formula gives 40, 38, 36, 31, 25, 20, and 15 slots per page for
+lengths 100, 104, 110, 128, 160, 200, and 256, which produces the measured
+page counts (`ceil(17813 / slots)`). `records/page` is
+`floor(records / pages)`, an average over the file, not the slot capacity of
+a page. The longest record is 108 bytes, so every static length of 108 or
+more stores all bytes and only the page count grows; at 100 and 104 the
+utilization is higher only because 5,749 and 159 records lost bytes. Every
+churn row equals its full-load row: the same records go back in, so records,
+stored bytes and the truncation count are unchanged (the benchmark asserts
+this), and the freed slots or page space are reused without new pages.
 
 # Part 3 B+ tree
 

@@ -40,7 +40,8 @@ AM_TESTS  = $(AM)/test1 $(AM)/test2 $(AM)/test3
 TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_pool \
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
-	    bench/bench_buffer
+	    tests/test_hfstatic \
+	    bench/bench_buffer bench/bench_space
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -58,7 +59,7 @@ STRESS_BIN     = tests/stress_pool
 STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
 STRESS_TIMEOUT = 600
 
-.PHONY: all tests test stress bench plots clean
+.PHONY: all tests test stress bench bench-space plots clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -86,6 +87,9 @@ hf/hfpage.o: hf/hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
 hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
+hf/hfstatic.o: hf/hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+
 tests/%.o: tests/%.c $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
 
@@ -100,6 +104,8 @@ tests/test_leftpage.o: tests/test_leftpage.c $(AM_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) -c $< -o $@
 tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
+tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
 tests/test_dirty.o: $(PF_HDRS)
@@ -109,6 +115,9 @@ tests/stress_pool.o: $(PF_HDRS)
 
 bench/bench_buffer.o: bench/bench_buffer.c $(COMMON_HDRS) $(PF_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
+
+bench/bench_space.o: bench/bench_space.c hf/hf.h $(COMMON_HDRS) $(PF_HDRS)
+	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
 tests: $(TEST_BINS)
 
@@ -152,12 +161,30 @@ tests/test_leftpage: tests/test_leftpage.o $(AM)/amlayer.o $(PF)/pflayer.o
 tests/test_hf_load: tests/test_hf_load.o hf/hf.o hf/hfpage.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
+tests/test_hfstatic: tests/test_hfstatic.o hf/hfstatic.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
 $(STRESS_BIN): tests/stress_pool.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 # config.o comes in through pflayer.o, like test_pool
 bench/bench_buffer: bench/bench_buffer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
+
+bench/bench_space: bench/bench_space.o hf/hf.o hf/hfpage.o hf/hfstatic.o \
+		$(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
+
+# the CSV is written to a temporary file and renamed only on success, so a
+# failed run leaves the previous results/bench_space.csv as it was
+bench-space: bench/bench_space
+	@mkdir -p results; \
+	TOYDB_ROOT="$(CURDIR)" bench/bench_space "conf=$(CURDIR)/toydb.conf" \
+		> results/bench_space.csv.tmp || { rm -f results/bench_space.csv.tmp; \
+		echo "make bench-space: FAILED, results/bench_space.csv unchanged"; \
+		exit 1; }; \
+	mv results/bench_space.csv.tmp results/bench_space.csv; \
+	echo "make bench-space: results/bench_space.csv"
 
 # The provided test mains have no return statement, so exit codes are garbage.
 # A program passes only if its last output line is the expected "done!" line.
@@ -212,6 +239,9 @@ test: tests
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
+	check bench/bench_space last "bench_space check done!" \
+		"conf=$(CURDIR)/toydb.conf" check; \
+	check tests/test_hfstatic last "test_hfstatic done!"; \
 	check tests/test_leftpage last "test_leftpage done!"; \
 	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \
 	if [ $$fail -ne 0 ]; then \
