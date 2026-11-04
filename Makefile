@@ -111,7 +111,7 @@ tests/test_leftpage.o: tests/test_leftpage.c $(AM_HDRS)
 tests/test_ambulk.o: tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
-tests/test_bulk.o: tests/test_bulk.c tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
+tests/test_bulk.o: tests/test_bulk.c $(AM_HDRS) $(AM)/ambulk.h
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
 tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
@@ -266,8 +266,8 @@ test: tests
 	check tests/test_hfpage last "test_hfpage done!"; \
 	check tests/test_hf last "test_hf done!"; \
 	check tests/test_hf_load last "test_hf_load done!" "conf=$(CURDIR)/toydb.conf"; \
-	check tests/test_ambulk last "test_ambulk done!"; \
-	check tests/test_bulk last "test_ambulk done!"; \
+	check tests/test_ambulk last "test_ambulk done!" "conf=$(CURDIR)/toydb.conf"; \
+	check tests/test_bulk last "test_bulk done!" "conf=$(CURDIR)/toydb.conf"; \
 	check tests/test_bulk_data last "test_bulk_data done!" \
 		"conf=$(CURDIR)/toydb.conf"; \
 	check bench/bench_space last "bench_space check done!" \

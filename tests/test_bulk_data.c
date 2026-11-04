@@ -32,7 +32,6 @@ extern int AM_BulkLoad(char *relName, int indexNo, char attrType,
 		       int attrLength, AMBulkNext next, void *context);
 
 #define KEY_LENGTH 8
-#define EXPECTED_RECORDS 17813
 
 struct indexed_record {
 	char key[KEY_LENGTH];
@@ -296,7 +295,7 @@ check_full_scan(int fd, struct indexed_record *by_rid, int count)
 	scan = AM_OpenIndexScan(fd, 'c', KEY_LENGTH, ALL, NULL);
 	if (scan < 0)
 		fail("could not open a full scan");
-	seen = (char *)calloc((size_t)count, sizeof(*seen));
+	seen = (char *)calloc((size_t)count + 1, sizeof(*seen));
 	if (seen == NULL)
 		fail("full scan seen-set allocation failed");
 	for (i = 0; i < count; i++) {
@@ -331,7 +330,10 @@ main(int argc, char **argv)
 	char path[4096];
 	const char *data_file;
 	const char *root;
-	double fill_factor;
+	double leaf_fill;
+	int distinct;
+	int leaf_capacity;
+	int i;
 	long line_number;
 	int capacity;
 	int count;
@@ -401,14 +403,12 @@ main(int argc, char **argv)
 		count++;
 	}
 	fclose(input);
-	if (count != EXPECTED_RECORDS)
-		fail("student record count differs from 17813");
 	if (HF_GetSpaceStats(fd, &stats) != HF_OK)
 		fail("heap statistics failed");
 	if (HF_CloseFile(fd) != HF_OK)
 		fail("heap-file close failed");
 	qsort(records, (size_t)count, sizeof(*records), compare_records);
-	by_rid = (struct indexed_record *)malloc((size_t)count *
+	by_rid = (struct indexed_record *)malloc(((size_t)count + 1) *
 						 sizeof(*by_rid));
 	if (by_rid == NULL)
 		fail("RID model allocation failed");
@@ -434,10 +434,25 @@ main(int argc, char **argv)
 		if (PF_UnfixPage(index_fd, page_number, FALSE) != PFE_OK)
 			fail("could not unfix an index page");
 	}
-	fill_factor = Config_GetDouble("bulk_fill_factor", 1.0);
-	printf("data_pages=%ld leaves=%d tree_height=%d fill_factor=%.3f\n",
-	       stats.pages, leaves, height, fill_factor);
-	printf("index_pages=%d records=%d\n", pages, count);
+	/* everything below comes from the records read, not from constants
+	   about the data set; an empty or header-only file is valid input */
+	distinct = 0;
+	for (i = 0; i < count; i++)
+		if (i == 0 || memcmp(records[i - 1].key, records[i].key,
+				     KEY_LENGTH) != 0)
+			distinct++;
+	/* keys with one rid each that fit a leaf, as in AM_BulkLoad */
+	leaf_capacity = (PF_PAGE_SIZE - (int)sizeof(AM_LEAFHEADER)) /
+			(KEY_LENGTH + 8);
+	leaf_fill = (double)distinct / leaves / leaf_capacity;
+	if (count == 0 && (pages != 1 || leaves != 1 || height != 1))
+		fail("empty input did not give a single empty leaf");
+	printf("records=%d distinct_keys=%d data_pages=%ld\n", count,
+	       distinct, stats.pages);
+	printf("index_pages=%d leaves=%d tree_height=%d\n", pages, leaves,
+	       height);
+	printf("leaf_fill=%.3f (%.1f keys per leaf / capacity %d)\n",
+	       leaf_fill, (double)distinct / leaves, leaf_capacity);
 	if (PF_CloseFile(index_fd) != PFE_OK)
 		fail("index close failed");
 	if (AM_DestroyIndex("test_bulk_data", 0) != AME_OK)

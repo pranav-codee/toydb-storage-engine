@@ -19,6 +19,9 @@ tests/test_hf
 tests/test_hf_load
 tests/test_leftpage
 tests/test_hfstatic
+tests/test_ambulk
+tests/test_bulk
+tests/test_bulk_data
 file1
 file2
 testrel.*
