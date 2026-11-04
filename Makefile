@@ -348,13 +348,22 @@ bench: bench/bench_buffer
 
 # Figures (PDF + PNG) and the summary table into results/, from the CSV of
 # make bench. Not part of make test.
+# Part 3 figures and table from the CSV of make bench-index, if there is one.
+INDEX_CSV = results/bench_index.csv
+
 plots:
 	@if [ ! -f $(BENCH_CSV) ]; then \
 		echo "make plots: $(BENCH_CSV) missing, run make bench first"; \
 		exit 1; \
 	fi; \
 	python3 scripts/plot_buffer.py $(BENCH_CSV) results \
-		--conf "$(CURDIR)/toydb.conf"
+		--conf "$(CURDIR)/toydb.conf" || exit 1; \
+	if [ -f $(INDEX_CSV) ]; then \
+		python3 scripts/plot_index.py $(INDEX_CSV) results || exit 1; \
+	else \
+		echo "make plots: $(INDEX_CSV) missing, run make bench-index" \
+			"first (Part 3 plots skipped)"; \
+	fi
 
 clean:
 	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o bench/*.o $(TEST_BINS) $(STRESS_BIN) \
