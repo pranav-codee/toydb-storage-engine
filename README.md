@@ -188,6 +188,41 @@ error bars.
 `plot_pool` and `plot_read_pct` are in `toydb.conf`. Run the script directly
 with `--pool N` to plot another pool size.
 
+## Buffer results
+
+With the supplied `toydb.conf` (a 1,000-page file, 10,000 operations per
+run, 5 repeats), `results/buffer_summary.csv` gives these means at pool 100
+and 50% reads:
+
+| pattern | policy | hit ratio | physical reads | total physical writes | evictions | dirty evictions |
+|---|---|---:|---:|---:|---:|---:|
+| uniform | LRU | 0.0999 | 9001.0 | 4746.6 | 8901.0 | 4689.2 |
+| uniform | MRU | 0.0967 | 9032.6 | 4759.6 | 8932.6 | 4708.6 |
+| hotcold | LRU | 0.3070 | 6930.4 | 4091.4 | 6830.4 | 4030.4 |
+| hotcold | MRU | 0.1243 | 8756.6 | 4683.2 | 8656.6 | 4633.0 |
+| sequential | LRU | 0.0000 | 10000.0 | 4974.8 | 9900.0 | 4926.2 |
+| sequential | MRU | 0.0900 | 9100.0 | 4571.6 | 9000.0 | 4473.0 |
+
+Physical reads are `misses`, and evictions are physical reads minus the 100
+frames filled first. With uniform access there is no locality, so the hit
+ratio is about pool / file pages (0.100) for both policies. With the hot/cold
+pattern LRU keeps the recently used hot pages and gets 0.307, against 0.124
+for MRU, which evicts the page it just used, most likely a hot one; LRU
+needs 21% fewer physical reads. The looping sequential scan is the case for
+MRU: LRU evicts each page just before the loop comes back to it, so it has
+0 hits at every pool smaller than the file (20 to 900 frames), while MRU
+keeps most of the pool in place and gets 0.090 at pool 100 and 0.810 at
+pool 900. At pool 1200 the whole file fits, and every pattern and policy
+has only the 1,000 first-touch misses (hit ratio 0.900).
+
+The read/write mix changes only the write counters. Replacement ignores the
+dirty bit, and hits, misses, physical reads and evictions were the same at
+every read percentage in every configuration. About half of the evictions
+are dirty at 50% reads, and `total_physical_writes` adds the pages still
+dirty at the end. At pool 100 the disk I/O per operation
+(`buffer_io_vs_mix`) grows from 0.900 at 100% reads to 1.800 at 0% reads
+for uniform LRU, since every eviction then also writes the page back.
+
 # Part 2 slotted pages
 
 ## Slotted pages
@@ -355,7 +390,7 @@ row per method, repeat and phase. `make plots` then also writes
 `bench/bench_index check`: 604 synthetic records with a hand-computed M3
 shape and result counts, independent of `toydb.conf` and `student.txt`.
 
-## Results
+## Part 3 results
 
 These are means over 5 repeats on `student.txt`, with pool 50 and f = 1.0.
 The build I/O and the tree shapes were identical in every repeat; only the
@@ -368,21 +403,21 @@ page fix requests; physical reads and writes count actual page transfers.
 | Leaves | 109 | 109 | 71 |
 | Height | 2 | 2 | 2 |
 | Leaf fill | 64.3% | 64.3% | 98.8% |
-| Build time (ms) | 8.3 | 2001.0 | 6.5 |
-| &nbsp;&nbsp;index part (ms) | 4.2 | 23.1 | 1.2 |
-| &nbsp;&nbsp;heap scan + sort (ms) | – | – | 5.2 |
+| Build time (ms) | 8.4 | 2001.9 | 6.6 |
+| &nbsp;&nbsp;index part (ms) | 4.3 | 23.2 | 1.3 |
+| &nbsp;&nbsp;heap scan + sort (ms) | – | – | 5.3 |
 | Build index logical reads / writes | 35,478 / 18,030 | 35,478 / 18,030 | 2 / 73 |
 | Build index physical reads / writes | 30 / 140 | 31,905 / 16,168 | 2 / 73 |
 | Build heap physical reads + writes | 453 | 4,010,110 | 453 |
 | Point: logical / physical reads per query | 5.01 / 0.550 | 5.01 / 0.550 | 5.00 / 0.323 |
-| Point: time per query (µs) | 0.58 | 0.59 | 0.46 |
+| Point: time per query (µs) | 0.60 | 0.62 | 0.46 |
 | Point: heap physical reads per query (record fetch) | 0.898 | 0.898 | 0.898 |
 | Missing: logical / physical reads per query | 4.31 / 0.648 | 4.30 / 0.644 | 4.19 / 0.494 |
-| Missing: time per query (µs) | 0.67 | 0.67 | 0.57 |
+| Missing: time per query (µs) | 0.78 | 0.76 | 0.67 |
 | Range (100 rids): logical / physical reads per query | 104.62 / 1.000 | 104.62 / 1.000 | 104.38 / 0.572 |
-| Range: time per query (µs) | 2.95 | 3.00 | 2.64 |
+| Range: time per query (µs) | 3.15 | 3.07 | 2.78 |
 | Full scan: logical / physical reads | 17,924 / 110 | 17,924 / 110 | 17,886 / 72 |
-| Full scan: time (µs) | 430 | 416 | 400 |
+| Full scan: time (µs) | 453 | 429 | 424 |
 
 **Size.** The bulk-loaded tree has 72 pages against 110 (about 35% fewer), because
 its leaves are full: 98.8% against 64.3%. Its fill is not 100% only because
@@ -393,9 +428,9 @@ the last of the 71 leaves is partly empty (17,810 distinct keys over
 of its 72 pages once (73 writes, since page 0 is written once by
 `AM_CreateIndex` and again as the root) and needs 2 logical reads. M1 needs
 35,478 logical reads and 18,030 logical writes: a root-to-leaf search for
-every insert, plus the splits. The load alone takes 1.2 ms. Most of M3's
-6.5 ms is the heap scan (453 heap page reads, the same as M1's scan) and the
-in-memory sort (5.2 ms together). The sort itself costs no PF I/O; a sort
+every insert, plus the splits. The load alone takes 1.3 ms. Most of M3's
+6.6 ms is the heap scan (453 heap page reads, the same as M1's scan) and the
+in-memory sort (5.3 ms together). The sort itself costs no PF I/O; a sort
 too big for memory would add about two passes over the pairs.
 
 **M2.** M2 does the same index work as M1: the same logical counts.
@@ -403,7 +438,7 @@ Its 2 s build, though, comes almost entirely from the heap. The first-fit
 `HF_Insert` reads 4.0 million heap pages through the pool for 17,813
 inserts. Those heap pages push index pages out of the 50 frames, so the
 index needs 31,905 physical reads and 16,168 physical writes, against 30 and
-140 in M1. That is why its index part takes 23.1 ms against 4.2 ms.
+140 in M1. That is why its index part takes 23.2 ms against 4.3 ms.
 
 **M1 and M2 are not the same tree.** They have the same totals (110 pages,
 109 leaves, 64.3% fill), but walking both leaf chains shows that 9 of the
@@ -434,7 +469,7 @@ The difference shows in the physical reads. With a cold 50-frame pool, a
 smaller tree means fewer distinct pages to bring in. M3 needs 41% fewer
 physical reads per point query (0.323 against 0.550), 43% fewer per range
 query (0.572 against 1.000), and 72 instead of 110 for the full scan. The
-times follow the same order but differ little (0.46 against 0.58 µs per
+times follow the same order but differ little (0.46 against 0.60 µs per
 point query). The pages come from the operating system's file cache, so a
 "physical" read is cheap here; on a real disk the page counts would matter
 much more than these times suggest.
@@ -472,7 +507,7 @@ with the same ID, so a row can be traced to the lines it describes.
 
 # Results
 
-Measured results for Part 2 and Part 3 are in their sections above. All results, including the Part 1 figures and summary table, are in `results/` and are regenerated with `make bench`, `make bench-space`, `make bench-index` and then `make plots`.
+Measured results are in the [Buffer results](#buffer-results), [Static layout and comparison](#static-layout-and-comparison) and [Part 3 results](#part-3-results) sections above. All result files, including the figures, are in `results/` and are regenerated with `make bench`, `make bench-space`, `make bench-index` and then `make plots`.
 
 | File(s) | Part | Contents |
 |---|---|---|
