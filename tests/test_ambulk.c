@@ -49,10 +49,12 @@ next_item(void *context, char *key, int *rid)
 	value = stream->next / 2;
 	if (stream->bad && stream->next == 3)
 		value = 0;
-	key[0] = (char)((value >> 24) & 0xff);
-	key[1] = (char)((value >> 16) & 0xff);
-	key[2] = (char)((value >> 8) & 0xff);
-	key[3] = (char)(value & 0xff);
+	/* four ASCII digits: 'c' keys compare with strncmp, which stops at a
+	   NUL byte, so binary int bytes would all compare equal */
+	key[0] = (char)('0' + value / 1000 % 10);
+	key[1] = (char)('0' + value / 100 % 10);
+	key[2] = (char)('0' + value / 10 % 10);
+	key[3] = (char)('0' + value % 10);
 	*rid = stream->next;
 	stream->next++;
 	return AM_BULK_NEXT_ITEM;
