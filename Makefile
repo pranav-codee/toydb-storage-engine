@@ -43,7 +43,7 @@ TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_p
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
 	    tests/test_hfstatic tests/test_ambulk tests/test_bulk \
 	    tests/test_bulk_data tests/test_amscan \
-	    bench/bench_buffer bench/bench_space
+	    bench/bench_buffer bench/bench_space bench/bench_index
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
 TEST_TIMEOUT = 60
@@ -61,7 +61,7 @@ STRESS_BIN     = tests/stress_pool
 STRESS_SEEDS   = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
 STRESS_TIMEOUT = 600
 
-.PHONY: all tests test stress bench bench-space plots clean
+.PHONY: all tests test stress bench bench-space bench-index plots clean
 
 all: $(PF)/pflayer.o $(AM)/amlayer.o $(COMMON_OBJS)
 
@@ -127,6 +127,11 @@ tests/test_dirty.o: $(PF_HDRS)
 tests/test_stats.o: $(PF_HDRS)
 tests/test_workload.o: $(PF_HDRS)
 tests/stress_pool.o: $(PF_HDRS)
+
+bench/bench_index.o: bench/bench_index.c hf/hf.h $(AM_HDRS) $(AM)/ambulk.h \
+		$(COMMON_HDRS)
+	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) \
+		-I$(PF) -Ihf $(NEWINC) -c $< -o $@
 
 bench/bench_buffer.o: bench/bench_buffer.c $(COMMON_HDRS) $(PF_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -I$(PF) -c $< -o $@
@@ -208,6 +213,10 @@ bench/bench_space: bench/bench_space.o hf/hf.o hf/hfpage.o hf/hfstatic.o \
 		$(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -Ihf -I$(PF) -o $@ $^
 
+bench/bench_index: bench/bench_index.o hf/hf.o hf/hfpage.o $(AM)/amlayer.o \
+		$(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
 # the CSV is written to a temporary file and renamed only on success, so a
 # failed run leaves the previous results/bench_space.csv as it was
 bench-space: bench/bench_space
@@ -218,6 +227,18 @@ bench-space: bench/bench_space
 		exit 1; }; \
 	mv results/bench_space.csv.tmp results/bench_space.csv; \
 	echo "make bench-space: results/bench_space.csv"
+
+# Part 3 index benchmark, the same way: results/bench_index.csv only on
+# success (progress goes to stderr, the CSV to stdout)
+bench-index: bench/bench_index
+	@mkdir -p results; start=`date +%s`; \
+	TOYDB_ROOT="$(CURDIR)" bench/bench_index "conf=$(CURDIR)/toydb.conf" \
+		> results/bench_index.csv.tmp || { rm -f results/bench_index.csv.tmp; \
+		echo "make bench-index: FAILED, results/bench_index.csv unchanged"; \
+		exit 1; }; \
+	mv results/bench_index.csv.tmp results/bench_index.csv; end=`date +%s`; \
+	echo "make bench-index: results/bench_index.csv," \
+		"`wc -l < results/bench_index.csv` lines, `expr $$end - $$start`s"
 
 # The provided test mains have no return statement, so exit codes are garbage.
 # A program passes only if its last output line is the expected "done!" line.
@@ -282,6 +303,7 @@ test: tests
 	check tests/test_leftpage last "test_leftpage done!"; \
 	check tests/test_amscan last "test_amscan done!" "conf=$(CURDIR)/toydb.conf"; \
 	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \
+	check bench/bench_index last "bench_index check done!" check; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
 	fi; \
@@ -326,13 +348,22 @@ bench: bench/bench_buffer
 
 # Figures (PDF + PNG) and the summary table into results/, from the CSV of
 # make bench. Not part of make test.
+# Part 3 figures and table from the CSV of make bench-index, if there is one.
+INDEX_CSV = results/bench_index.csv
+
 plots:
 	@if [ ! -f $(BENCH_CSV) ]; then \
 		echo "make plots: $(BENCH_CSV) missing, run make bench first"; \
 		exit 1; \
 	fi; \
 	python3 scripts/plot_buffer.py $(BENCH_CSV) results \
-		--conf "$(CURDIR)/toydb.conf"
+		--conf "$(CURDIR)/toydb.conf" || exit 1; \
+	if [ -f $(INDEX_CSV) ]; then \
+		python3 scripts/plot_index.py $(INDEX_CSV) results || exit 1; \
+	else \
+		echo "make plots: $(INDEX_CSV) missing, run make bench-index" \
+			"first (Part 3 plots skipped)"; \
+	fi
 
 clean:
 	rm -f $(PF)/*.o $(AM)/*.o common/*.o hf/*.o tests/*.o bench/*.o $(TEST_BINS) $(STRESS_BIN) \

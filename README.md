@@ -215,7 +215,161 @@ this), and the freed slots or page space are reused without new pages.
 
 # Part 3 B+ tree
 
-TODO: Describe index construction, bulk loading, and query measurements.
+## Three ways to build the index
+
+The index is a B+ tree on roll no (field 2, `char(8)`), with the record's
+heap-file RID as the record id. `bench/bench_index` builds it three ways
+from the same 17,813 records:
+
+- **M1 existing.** The heap file is already loaded (not measured). One scan
+  of it (`HF_ScanNext`) inserts every `(roll no, rid)` with
+  `AM_InsertEntry`.
+- **M2 incremental.** Starts from an empty heap file and an empty index.
+  Each record goes into the heap file with `HF_Insert` and its key goes into
+  the index right away.
+- **M3 bulk.** One heap scan collects the `(roll no, rid)` pairs, `qsort`
+  puts them in AM order (`memcmp`, the same as the AM's `strncmp` on 8-byte
+  keys), and `AM_BulkLoad` builds the tree bottom-up. The scan and the sort
+  are timed apart from the load. The load alone is the cost when the file is
+  already sorted.
+
+M2 runs first, and its heap file is the one M1 and M3 index, so all three
+trees hold the same `(key, rid)` pairs.
+
+The bulk loader (`amlayer/ambulk.c`, change A2) fills each leaf with
+floor(f × 254) keys at fill factor f (`bulk_fill_factor`, default 1.0).
+254 is the char(8) leaf capacity, floor((4096 − 24) / 16). Internal nodes
+take floor(f × 341) children. The rids of one key never span two leaves.
+The root is written into page 0, and every page is reachable from it, so the
+file has exactly 1 + leaves + internal pages.
+
+## How it is measured
+
+- **Index and heap I/O are counted apart.** Only the heap file and the index
+  file are ever open, and the PF counters charge each page access to the file
+  that owns the page, including the write-back of an evicted dirty page.
+  While a file is open its own `PF_GetStats(fd)` counters are used, read
+  after `PF_FlushAll` so that closing it writes nothing more.
+  `AM_CreateIndex`, `HF_CreateFile` and `AM_BulkLoad` open and close their
+  file themselves. Each runs with no other file open, so the delta of the
+  global counters `PF_GetStats(-1)` around the call is that file's I/O.
+- **Self-checks.** For every build the global delta must equal index plus
+  heap (logical and physical reads and writes). For every measurement
+  hits + misses must equal logical reads. Any difference stops the run.
+- **Cold pool.** Every build and every query batch starts with all files
+  closed and an empty pool of `buffer_pool_size` frames (50 in `toydb.conf`).
+- **Identical query sets.** One query set is made per repeat from `seed` and
+  the repeat number, and all three indexes answer it. It contains:
+  - `idx_point_queries` EQ scans on existing keys;
+  - `idx_missing_queries` absent values, half in the gap between two leaves
+    and half in a gap inside a leaf;
+  - `idx_range_queries` GE scans from an existing key, stopped after
+    `idx_range_len` results;
+  - one full scan.
+- **Index cost vs record fetch.** Each query is timed alone, and the index
+  columns hold only the index file's I/O. For the point queries, a separate
+  cold-pool pass then fetches every record found with `HF_Get`, and reports
+  the heap pages that needs.
+- **Correctness.** Every query's record ids are compared with a sorted
+  in-memory copy of the pairs: each rid once, keys in order, the right count.
+  All three indexes must pass, so they return the same sets.
+
+Run it with `make bench-index`, which writes `results/bench_index.csv`, one
+row per method, repeat and phase. `make plots` then also writes
+`results/index_build.pdf/.png`, `results/index_queries.pdf/.png` and
+`results/index_summary.csv/.tex`. `make test` runs
+`bench/bench_index check`: 604 synthetic records with a hand-computed M3
+shape and result counts, independent of `toydb.conf` and `student.txt`.
+
+## Results
+
+These are means over 5 repeats on `student.txt`, with pool 50 and f = 1.0.
+The build I/O and the tree shapes were identical in every repeat; only the
+times varied. Logical reads count
+page fix requests; physical reads and writes count actual page transfers.
+
+| | M1 existing | M2 incremental | M3 bulk |
+|---|---:|---:|---:|
+| Index pages | 110 | 110 | 72 |
+| Leaves | 109 | 109 | 71 |
+| Height | 2 | 2 | 2 |
+| Leaf fill | 64.3% | 64.3% | 98.8% |
+| Build time (ms) | 8.3 | 2001.0 | 6.5 |
+| &nbsp;&nbsp;index part (ms) | 4.2 | 23.1 | 1.2 |
+| &nbsp;&nbsp;heap scan + sort (ms) | – | – | 5.2 |
+| Build index logical reads / writes | 35,478 / 18,030 | 35,478 / 18,030 | 2 / 73 |
+| Build index physical reads / writes | 30 / 140 | 31,905 / 16,168 | 2 / 73 |
+| Build heap physical reads + writes | 453 | 4,010,110 | 453 |
+| Point: logical / physical reads per query | 5.01 / 0.550 | 5.01 / 0.550 | 5.00 / 0.323 |
+| Point: time per query (µs) | 0.58 | 0.59 | 0.46 |
+| Point: heap physical reads per query (record fetch) | 0.898 | 0.898 | 0.898 |
+| Missing: logical / physical reads per query | 4.31 / 0.648 | 4.30 / 0.644 | 4.19 / 0.494 |
+| Missing: time per query (µs) | 0.67 | 0.67 | 0.57 |
+| Range (100 rids): logical / physical reads per query | 104.62 / 1.000 | 104.62 / 1.000 | 104.38 / 0.572 |
+| Range: time per query (µs) | 2.95 | 3.00 | 2.64 |
+| Full scan: logical / physical reads | 17,924 / 110 | 17,924 / 110 | 17,886 / 72 |
+| Full scan: time (µs) | 430 | 416 | 400 |
+
+**Size.** The bulk-loaded tree has 72 pages against 110 (about 35% fewer), because
+its leaves are full: 98.8% against 64.3%. Its fill is not 100% only because
+the last of the 71 leaves is partly empty (17,810 distinct keys over
+71 × 254 slots).
+
+**Build cost.** M3 is the cheapest build by far in index I/O. It writes each
+of its 72 pages once (73 writes, since page 0 is written once by
+`AM_CreateIndex` and again as the root) and needs 2 logical reads. M1 needs
+35,478 logical reads and 18,030 logical writes: a root-to-leaf search for
+every insert, plus the splits. The load alone takes 1.2 ms. Most of M3's
+6.5 ms is the heap scan (453 heap page reads, the same as M1's scan) and the
+in-memory sort (5.2 ms together). The sort itself costs no PF I/O; a sort
+too big for memory would add about two passes over the pairs.
+
+**M2.** M2 does the same index work as M1: the same logical counts.
+Its 2 s build, though, comes almost entirely from the heap. The first-fit
+`HF_Insert` reads 4.0 million heap pages through the pool for 17,813
+inserts. Those heap pages push index pages out of the 50 frames, so the
+index needs 31,905 physical reads and 16,168 physical writes, against 30 and
+140 in M1. That is why its index part takes 23.1 ms against 4.2 ms.
+
+**M1 and M2 are not the same tree.** They have the same totals (110 pages,
+109 leaves, 64.3% fill), but walking both leaf chains shows that 9 of the
+109 leaves hold different key ranges (for example 239 against 241 keys in
+leaf 32), and 5 leaves sit on different page numbers. The cause is insertion
+order. M2 inserts in file order. M1 inserts in heap-scan order, which
+differs wherever first-fit put a record on an earlier page with room left:
+31 records have a smaller rid than the record before them in the file. Those
+keys arrive at different times, so a few leaves split at different keys. The
+number of splits is the same (both trees end with 109 leaves under one
+root), and so are the logical page counts. This comparison was a one-off
+check with a scratch copy of the benchmark, not part of `bench_index`.
+
+**Queries.** All three trees have height 2, so the logical reads per query
+are almost the same. They are higher than 2 because of how the provided scan
+code works. Every `AM_OpenIndexScan` walks to the leftmost leaf
+(`GetLeftPageNum`, 2 reads) besides the search (2 reads), and
+`AM_FindNextEntry` fixes the current leaf for every rid it returns.
+- **Point:** 5 logical reads.
+- **Missing:** about 4. A value past the last key of the leaf it reaches
+  costs one more fix, the next leaf.
+- **Range:** 4 plus 100 rids plus the leaf crossings.
+- **Full scan:** 3 + 17,813 + one per leaf crossed, so 17,924 for M1 and M2
+  (108 crossings) and 17,886 for M3 (70 crossings). A full-scan open fixes
+  the leftmost leaf once more after `GetLeftPageNum`.
+
+The difference shows in the physical reads. With a cold 50-frame pool, a
+smaller tree means fewer distinct pages to bring in. M3 needs 41% fewer
+physical reads per point query (0.323 against 0.550), 43% fewer per range
+query (0.572 against 1.000), and 72 instead of 110 for the full scan. The
+times follow the same order but differ little (0.46 against 0.58 µs per
+point query). The pages come from the operating system's file cache, so a
+"physical" read is cheap here; on a real disk the page counts would matter
+much more than these times suggest.
+
+**Record fetch.** Fetching the records of the point queries costs 0.898 heap
+physical reads per query for every method, since the heap file is the same.
+That is more than the index lookup costs on any of the three trees. `HF_Get`
+counts 2 logical reads per record (the header page and the data page), and
+the header page stays in the pool.
 
 # Changes to provided code
 
