@@ -1,0 +1,7 @@
+pattern,policy,hit_ratio,physical_reads,total_physical_writes,evictions,dirty_evictions
+uniform,LRU,0.099900,9001.0,4746.6,8901.0,4689.2
+uniform,MRU,0.096740,9032.6,4759.6,8932.6,4708.6
+hotcold,LRU,0.306960,6930.4,4091.4,6830.4,4030.4
+hotcold,MRU,0.124340,8756.6,4683.2,8656.6,4633.0
+sequential,LRU,0.000000,10000.0,4974.8,9900.0,4926.2
+sequential,MRU,0.090000,9100.0,4571.6,9000.0,4473.0

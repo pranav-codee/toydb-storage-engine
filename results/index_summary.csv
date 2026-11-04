@@ -1,0 +1,26 @@
+metric,M1,M2,M3
+index pages,110,110,72
+leaves,109,109,71
+height,2,2,2
+leaf fill (%),64.3,64.3,98.8
+build time (ms),8.4,2001.9,6.6
+index part (ms),4.3,23.2,1.3
+heap scan + sort (ms),0.0,0.0,5.3
+build index logical reads,35478,35478,2
+build index logical writes,18030,18030,73
+build index physical reads,30,31905,2
+build index physical writes,140,16168,73
+build heap physical reads + writes,453,4010110,453
+point: index logical reads / query,5.01,5.01,5.00
+point: index physical reads / query,0.550,0.550,0.323
+point: time / query (us),0.60,0.62,0.46
+point: heap physical reads / query (record fetch),0.898,0.898,0.898
+missing: index logical reads / query,4.31,4.30,4.19
+missing: index physical reads / query,0.648,0.644,0.494
+missing: time / query (us),0.78,0.76,0.67
+range: index logical reads / query,104.62,104.62,104.38
+range: index physical reads / query,1.000,1.000,0.572
+range: time / query (us),3.15,3.07,2.78
+full scan: index logical reads / query,17924.00,17924.00,17886.00
+full scan: index physical reads / query,110.000,110.000,72.000
+full scan: time / query (us),453.20,428.68,424.08

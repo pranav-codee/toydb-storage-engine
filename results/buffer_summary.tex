@@ -1,0 +1,15 @@
+% from bench_buffer.csv: pool 100, 50% reads, means over repeats
+\begin{tabular}{llrrrrr}
+\toprule
+Pattern & Policy & Hit ratio & Phys.\ reads & Phys.\ writes & Evictions & Dirty evict. \\
+\midrule
+uniform & LRU & 0.100 & 9001.0 & 4746.6 & 8901.0 & 4689.2 \\
+ & MRU & 0.097 & 9032.6 & 4759.6 & 8932.6 & 4708.6 \\
+\midrule
+hotcold & LRU & 0.307 & 6930.4 & 4091.4 & 6830.4 & 4030.4 \\
+ & MRU & 0.124 & 8756.6 & 4683.2 & 8656.6 & 4633.0 \\
+\midrule
+sequential & LRU & 0.000 & 10000.0 & 4974.8 & 9900.0 & 4926.2 \\
+ & MRU & 0.090 & 9100.0 & 4571.6 & 9000.0 & 4473.0 \\
+\bottomrule
+\end{tabular}
