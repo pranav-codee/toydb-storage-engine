@@ -9,16 +9,10 @@
      char(200): leaf capacity 4072/208 = 19 keys, internal maxKeys
                 4084/204 = 20, so 21 children
 
-   Scans avoid four pre-existing AM scan bugs, which are fixed on a
-   separate branch, not here:
-     P1  NE scan on a value absent from the index (crash or garbage)
-     P2  any value scan on an absent value that falls in the gap after
-         the last key of a non-last leaf (AME_PF, pages left fixed)
-     P3  LE scan on the largest key (runs off the last leaf)
-     P4  LT scan on the first key of a non-first leaf (returns 0 records)
-   So there are no NE scans, absent values are only below the minimum or
-   above the maximum, LE is never on the maximum and LT is never on the
-   first key of a leaf other than the first. */
+   The scans include the cases fixed by A4-A7: NE on absent values, values
+   in the gap between two leaves (char(200) keys, where key v padded with
+   'y' sorts between v and v+1), LE on the largest key and LT on the first
+   key of a leaf other than the first. */
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -249,14 +243,14 @@ expect_shape(int fd, int length, int pages, int leaves, int height,
  * distinct and in range, and the count matches, so the set is exact).
  */
 static void
-expect_scan(int fd, int length, int op, int value, int low, int high,
-	    int extra_rids)
+expect_scan_pad(int fd, int length, int op, int value, char pad, int low,
+		int high, int extra_rids)
 {
 	char key[AM_MAXATTRLENGTH];
 	char seen[MAX_RIDS];
 	int scan, rid, count, want;
 
-	make_key(key, length, value, 'x');
+	make_key(key, length, value, pad);
 	want = low <= high ? high - low + 1 + extra_rids : 0;
 	scan = AM_OpenIndexScan(fd, 'c', length, op, op == ALL ? NULL : key);
 	check(scan >= 0, "open scan");
@@ -272,10 +266,62 @@ expect_scan(int fd, int length, int op, int value, int low, int high,
 	check(AM_CloseIndexScan(scan) == AME_OK, "close scan");
 	AM_EmptyStack();
 	if (count != want) {
-		fprintf(stderr, "test_bulk: scan op %d value %d: %d rids, want %d\n",
-			op, value, count, want);
+		fprintf(stderr, "test_bulk: scan op %d value %d%s: %d rids, "
+			"want %d\n", op, value, pad == 'x' ? "" : " (gap)",
+			count, want);
 		exit(1);
 	}
+}
+
+/* expect_scan_pad on a key of the stream (padded with 'x') */
+static void
+expect_scan(int fd, int length, int op, int value, int low, int high,
+	    int extra_rids)
+{
+	expect_scan_pad(fd, length, op, value, 'x', low, high, extra_rids);
+}
+
+/* NE scan on key v of a tree of keys 1..n with one rid each: every rid
+   but v-1, each once */
+static void
+expect_ne(int fd, int length, int value, int n)
+{
+	char key[AM_MAXATTRLENGTH];
+	char seen[MAX_RIDS];
+	int scan, rid, count;
+
+	make_key(key, length, value, 'x');
+	scan = AM_OpenIndexScan(fd, 'c', length, NOT_EQUAL, key);
+	check(scan >= 0, "open NE scan");
+	memset(seen, 0, sizeof(seen));
+	count = 0;
+	while ((rid = AM_FindNextEntry(scan)) >= 0) {
+		check(rid < n && rid < MAX_RIDS && rid != value - 1 &&
+		      !seen[rid], "NE: rid outside the expected set");
+		seen[rid] = 1;
+		count++;
+	}
+	check(rid == AME_EOF, "NE scan did not end with AME_EOF");
+	check(AM_CloseIndexScan(scan) == AME_OK, "close NE scan");
+	AM_EmptyStack();
+	if (count != n - 1) {
+		fprintf(stderr, "test_bulk: NE value %d: %d rids, want %d\n",
+			value, count, n - 1);
+		exit(1);
+	}
+}
+
+/* every operator on the gap value between keys v and v+1 of a tree of
+   keys 1..n with one rid each (length > 8, so the 'y' padding counts) */
+static void
+gap_set(int fd, int length, int n, int v)
+{
+	expect_scan_pad(fd, length, EQUAL, v, 'y', 1, 0, 0);
+	expect_scan_pad(fd, length, LESS_THAN, v, 'y', 1, v, 0);
+	expect_scan_pad(fd, length, LESS_THAN_EQUAL, v, 'y', 1, v, 0);
+	expect_scan_pad(fd, length, GREATER_THAN, v, 'y', v + 1, n, 0);
+	expect_scan_pad(fd, length, GREATER_THAN_EQUAL, v, 'y', v + 1, n, 0);
+	expect_scan_pad(fd, length, NOT_EQUAL, v, 'y', 1, n, 0);
 }
 
 static int
@@ -310,26 +356,28 @@ scan_set(int fd, int n, int first_of_leaf2)
 	expect_scan(fd, 8, LESS_THAN_EQUAL, 0, 1, 0, 0);
 	expect_scan(fd, 8, GREATER_THAN, 0, 1, n, 0);
 	expect_scan(fd, 8, GREATER_THAN_EQUAL, 0, 1, n, 0);
+	expect_scan(fd, 8, NOT_EQUAL, 0, 1, n, 0);
 	expect_scan(fd, 8, EQUAL, n + 1, 1, 0, 0);
 	expect_scan(fd, 8, LESS_THAN, n + 1, 1, n, 0);
 	expect_scan(fd, 8, LESS_THAN_EQUAL, n + 1, 1, n, 0);
 	expect_scan(fd, 8, GREATER_THAN, n + 1, 1, 0, 0);
 	expect_scan(fd, 8, GREATER_THAN_EQUAL, n + 1, 1, 0, 0);
-	/* present: the minimum, a middle key, the last key of leaf 1, a key
-	   past leaf 2's first, the maximum */
+	expect_scan(fd, 8, NOT_EQUAL, n + 1, 1, n, 0);
+	/* present: the minimum, a middle key, the last key of leaf 1, the
+	   first key of leaf 2, the maximum */
 	probes[0] = 1;
 	probes[1] = n / 2 + 1;
 	probes[2] = first_of_leaf2 > 0 ? first_of_leaf2 - 1 : n / 3 + 1;
-	probes[3] = first_of_leaf2 > 0 ? first_of_leaf2 + 3 : n / 4 + 1;
+	probes[3] = first_of_leaf2 > 0 ? first_of_leaf2 : n / 4 + 1;
 	probes[4] = n;
 	for (i = 0; i < 5; i++) {
 		v = probes[i];
 		expect_scan(fd, 8, EQUAL, v, v, v, 0);
 		expect_scan(fd, 8, GREATER_THAN, v, v + 1, n, 0);
 		expect_scan(fd, 8, GREATER_THAN_EQUAL, v, v, n, 0);
-		expect_scan(fd, 8, LESS_THAN, v, 1, v - 1, 0);	/* never P4 */
-		if (v != n)					/* P3 */
-			expect_scan(fd, 8, LESS_THAN_EQUAL, v, 1, v, 0);
+		expect_scan(fd, 8, LESS_THAN, v, 1, v - 1, 0);
+		expect_scan(fd, 8, LESS_THAN_EQUAL, v, 1, v, 0);
+		expect_ne(fd, 8, v, n);
 	}
 }
 
@@ -442,6 +490,17 @@ main(int argc, char **argv)
 	expect_scan(fd, 200, ALL, 0, 1, 418, 0);
 	expect_scan(fd, 200, EQUAL, 209, 209, 209, 0);
 	expect_scan(fd, 200, GREATER_THAN, 400, 401, 418, 0);
+	/* every leaf boundary (leaf j holds keys 19j+1..19j+19): the gap
+	   after the last key of each leaf, its first key and its last key */
+	for (i = 1; i <= 418; i++) {
+		if (i % 19 == 0 && i < 418)
+			gap_set(fd, 200, 418, i);
+		if (i % 19 == 1 || i % 19 == 0) {
+			expect_scan(fd, 200, LESS_THAN, i, 1, i - 1, 0);
+			expect_scan(fd, 200, LESS_THAN_EQUAL, i, 1, i, 0);
+		}
+	}
+	gap_set(fd, 200, 418, 209);		/* inside a leaf */
 	close_index(fd);
 
 	/* inserts after the load: char(200), 399 = 21 x 19 keys -> 21 full

@@ -40,6 +40,7 @@ char *pageBuf; /* buffer for page */
 int errVal; /* return value of functions */
 AM_LEAFHEADER head,*header; /* local header */
 int searchpageNum;
+char *searchBuf; /* CHANGED [A5]: buffer of the leaf AM_Search found */
 
 
 
@@ -96,6 +97,7 @@ if (value == NULL)
 /* search for the pagenumber and index of value */
 status = AM_Search(fileDesc,attrType,attrLength,value,&pageNum,&pageBuf,&index);
 searchpageNum = pageNum;
+searchBuf = pageBuf; /* CHANGED [A5]: see the LT, LE and NE cases */
 /* check for errors */
 if (status < 0) 
   { AM_scanTable[scanDesc].status = FREE;
@@ -113,12 +115,17 @@ key */
 if (index > header->numKeys) 
   if (header->nextLeafPage != AM_NULL_PAGE)
   {
-  errVal = PF_GetThisPage(fileDesc,header->nextLeafPage,&pageBuf);
+  /* CHANGED [A5]: pageNum is set to the next leaf before the bcopy, which
+  overwrites header with that leaf's header. The unfix used
+  header->nextLeafPage after the bcopy, i.e. the leaf after the next one,
+  which is not fixed: it failed with AME_PF and left the search leaf and
+  the next leaf fixed. Unfix pageNum, the page fixed here. */
+  pageNum = header->nextLeafPage;
+  errVal = PF_GetThisPage(fileDesc,pageNum,&pageBuf);
   AM_Check;
   bcopy(pageBuf,header,AM_sl);
-  errVal = PF_UnfixPage(fileDesc,header->nextLeafPage,FALSE);
+  errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
   AM_Check;
-  pageNum = header->nextLeafPage;
   index = 1;
   }
   else 
@@ -158,6 +165,9 @@ switch(op)
 		 { errVal = PF_GetThisPage(fileDesc,AM_LeftPageNum,&pageBuf);
                   AM_Check;
                  }
+                /* CHANGED [A5]: after a move to the next leaf above, pageBuf
+                is that leaf, not the leftmost leaf the search found */
+                else pageBuf = searchBuf;
                 bcopy(pageBuf + AM_sl + attrLength,
                         &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
                 if (searchpageNum != AM_LeftPageNum)
@@ -215,6 +225,9 @@ switch(op)
 		 { errVal = PF_GetThisPage(fileDesc,AM_LeftPageNum,&pageBuf);
                   AM_Check;
                  }
+                /* CHANGED [A5]: after a move to the next leaf above, pageBuf
+                is that leaf, not the leftmost leaf the search found */
+                else pageBuf = searchBuf;
                bcopy(pageBuf + AM_sl + attrLength,
                                  &AM_scanTable[scanDesc].nextRecIdPtr,AM_ss);
                if (searchpageNum != AM_LeftPageNum)
@@ -241,7 +254,13 @@ switch(op)
                }
   case NOT_EQUAL :
                {
-               if(status == AM_FOUND)
+               /* CHANGED [A4]: this set-up used to run only if the value
+               was found. For an absent value nextpageNum, nextIndex,
+               actindex and nextRecIdPtr kept whatever the scan table
+               slot held (zeros, or an old scan's cursor), so the scan
+               read page 0 or a stale page as a leaf: garbage record ids
+               or a crash. Every NE scan starts at the leftmost leaf; an
+               absent value just has nothing to skip (pageNum below). */
                 {
                 AM_scanTable[scanDesc].nextpageNum = AM_LeftPageNum;
                 AM_scanTable[scanDesc].nextIndex = 1;
@@ -251,6 +270,8 @@ switch(op)
 		  errVal = PF_GetThisPage(fileDesc,AM_LeftPageNum,&pageBuf);
                   AM_Check;
 		  }
+                /* CHANGED [A5]: as in the LT case */
+                else pageBuf = searchBuf;
                 bcopy(pageBuf + AM_sl + attrLength,
                               &AM_scanTable[scanDesc].nextRecIdPtr,   AM_ss);
                 if (searchpageNum != AM_LeftPageNum)
@@ -258,7 +279,7 @@ switch(op)
                   AM_Check;
                  }
                 }
-               else 
+               if (status != AM_FOUND) /* CHANGED [A4]: was "else" */
                 AM_scanTable[scanDesc].pageNum = AM_NULL_PAGE;
                break;
                }
@@ -344,7 +365,14 @@ while(header->numKeys == 0)
 empty pages*/
 if ((AM_scanTable[scanDesc].op == LESS_THAN) || 
   (AM_scanTable[scanDesc].op == LESS_THAN_EQUAL))
- if ((AM_scanTable[scanDesc].lastpageNum <= AM_scanTable[scanDesc].nextpageNum)
+ /* CHANGED [A7]: was lastpageNum <= nextpageNum. Page numbers are not
+ in leaf order (in a tree built by inserts the leftmost leaf is page 2 and
+ the next one is often page 1), so an LT or LE scan whose stop position is
+ index 0 of a later leaf (value = first key of that leaf, or a value in
+ the gap before it) stopped at the first leaf whose page number was at
+ least lastpageNum, often the leftmost leaf, with no records. Index 0 of
+ lastpageNum means the scan is over only once it is on that very leaf. */
+ if ((AM_scanTable[scanDesc].lastpageNum == AM_scanTable[scanDesc].nextpageNum)
  && (AM_scanTable[scanDesc].lastIndex == 0))
  {
   AM_scanTable[scanDesc].status = OVER;
@@ -470,8 +498,14 @@ if (AM_scanTable[scanDesc].op == EQUAL)
      AM_scanTable[scanDesc].status = OVER;
 
 /* see if you are at the last record if op is < or <= */
-if ((AM_scanTable[scanDesc].op == LESS_THAN) || 
+/* CHANGED [A6]: not once the scan is OVER. At the end of the last key's
+record ids in the last leaf the code above sets OVER, but for an LE scan on
+the largest key lastpageNum/lastIndex still match the cursor and the test
+below turned OVER back into LAST, so the next call went on past the end of
+the leaf and returned header bytes as record ids. */
+if (((AM_scanTable[scanDesc].op == LESS_THAN) || 
   (AM_scanTable[scanDesc].op == LESS_THAN_EQUAL))
+  && (AM_scanTable[scanDesc].status != OVER))
    if ((AM_scanTable[scanDesc].lastpageNum == AM_scanTable[scanDesc].nextpageNum)
     && (AM_scanTable[scanDesc].lastIndex == AM_scanTable[scanDesc].actindex))
        AM_scanTable[scanDesc].status = LAST;

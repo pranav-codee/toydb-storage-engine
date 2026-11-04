@@ -42,7 +42,7 @@ TEST_BINS = $(AM_TESTS) $(AM)/amtest $(PF)/testpf tests/test_config tests/test_p
 	    tests/test_policy tests/test_dirty tests/test_stats tests/test_workload \
 	    tests/test_hfpage tests/test_hf tests/test_hf_load tests/test_leftpage \
 	    tests/test_hfstatic tests/test_ambulk tests/test_bulk \
-	    tests/test_bulk_data \
+	    tests/test_bulk_data tests/test_amscan \
 	    bench/bench_buffer bench/bench_space
 
 # seconds each test program may run in make test (make test TEST_TIMEOUT=300)
@@ -114,6 +114,9 @@ tests/test_ambulk.o: tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
 tests/test_bulk.o: tests/test_bulk.c $(AM_HDRS) $(AM)/ambulk.h
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
+tests/test_amscan.o: tests/test_amscan.c $(AM_HDRS) $(AM)/ambulk.h
+	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
+		$(NEWINC) -c $< -o $@
 tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
@@ -180,6 +183,9 @@ tests/test_ambulk: tests/test_ambulk.o $(AM)/amlayer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_bulk: tests/test_bulk.o $(AM)/amlayer.o $(PF)/pflayer.o
+	$(CC) $(NEWFLAGS) -o $@ $^
+
+tests/test_amscan: tests/test_amscan.o $(AM)/amlayer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_bulk_data.o: tests/test_bulk_data.c hf/hf.h $(AM_HDRS) \
@@ -274,6 +280,7 @@ test: tests
 		"conf=$(CURDIR)/toydb.conf" check; \
 	check tests/test_hfstatic last "test_hfstatic done!"; \
 	check tests/test_leftpage last "test_leftpage done!"; \
+	check tests/test_amscan last "test_amscan done!" "conf=$(CURDIR)/toydb.conf"; \
 	check bench/bench_buffer last "bench_buffer check done!" "conf=$(CURDIR)/toydb.conf" check; \
 	if [ $$fail -ne 0 ]; then \
 		echo "make test: FAILED, logs kept in $$dir"; exit 1; \
