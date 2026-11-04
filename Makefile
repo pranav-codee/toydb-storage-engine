@@ -7,7 +7,12 @@
 #                   (slow, not part of make test)
 #   make bench      runs the buffer manager benchmark (bench/bench_buffer)
 #                   with toydb.conf into results/bench_buffer.csv
-#   make plots      figures and summary table from results/bench_buffer.csv
+#   make bench-space  runs the Part 2 space benchmark (bench/bench_space)
+#                   into results/bench_space.csv
+#   make bench-index  runs the Part 3 index benchmark (bench/bench_index)
+#                   into results/bench_index.csv
+#   make plots      figures and summary tables from results/bench_buffer.csv
+#                   and, if present, results/bench_index.csv
 #                   (python3 + matplotlib, run make bench first)
 #   make clean      removes build outputs and stray test files
 #

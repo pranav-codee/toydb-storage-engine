@@ -1,22 +1,96 @@
 # Overview
 
-TODO: Describe the toyDB assignment and its three parts.
+This repository extends toyDB, a teaching database with a Paged File (PF) layer and a B+ tree Access Method (AM) layer, for DBMS Assignment 1 (Pranav H Nair, B24CS1056; Ridham Shah, B24CS1064).
+
+- **Part 1, buffer manager:** a buffer pool whose size is set in `toydb.conf`, LRU or MRU replacement chosen per file when it is opened, a dirty flag with the explicit call `PF_MarkDirty`, and per-file and global I/O statistics. `make bench` measures them for seven read/write mixtures and `make plots` draws the graphs.
+- **Part 2, slotted pages:** a heap file of variable-length records in slotted pages (`hf/`) with insert, delete, get and sequential scan, and a static fixed-length layout for comparison. `make bench-space` loads the student table into both and reports space utilization for several maximum record lengths.
+- **Part 3, B+ tree index:** an index on roll number built three ways (from an existing heap file, incrementally while the file is loaded, and by bulk loading sorted pairs with the new `AM_BulkLoad`), compared on build cost, index size, and query time and pages accessed. `make bench-index` measures them and `make plots` draws the graphs.
+
+Every change to the provided PF and AM code is marked in the source with `/* CHANGED [ID]: ... */` and listed in [Changes to provided code](#changes-to-provided-code). Design decisions, with the reason for each and the consequence of not taking it, are recorded in `docs/DECISIONS.md`.
 
 # Build
 
-TODO: Document the clean build and test commands.
+Requirements: gcc and GNU make. `make plots` also needs Python 3 with matplotlib (`sudo apt install python3-matplotlib` or `pip install matplotlib`).
+
+The student data is not part of the repository. Extract the assignment's `data.tar.gz` next to this directory, so that the configured path `../data/student.txt` resolves:
+
+```
+parent/
+  toydb/              this repository (run make here)
+  data/student.txt    from data.tar.gz
+```
+
+If the data lives elsewhere, set `data_file` in `toydb.conf` to its path (absolute, or relative to this directory).
+
+```
+make            # build the PF layer, the AM layer and the configuration parser
+make test       # build every test program and run it; ends with "make test: all passed"
+make clean      # remove all build outputs
+```
+
+The provided K&R sources are compiled with `-std=gnu89 -w`; all new code is compiled with `-std=gnu89 -Wall -Wextra` and builds without warnings. `make test` runs each program in a scratch directory and passes it only if its last output line is its expected completion line (`pflayer/testpf` prints none, so for it a fixed line anywhere in its output is used). It runs:
+
+- the provided tests `amlayer/test1`, `test2`, `test3`, `amtest` and `pflayer/testpf`;
+- Part 1: `tests/test_config`, `test_pool`, `test_policy`, `test_dirty`, `test_stats`, `test_workload`, and `bench/bench_buffer check`;
+- Part 2: `tests/test_hfpage`, `test_hf`, `test_hf_load`, `test_hfstatic`, and `bench/bench_space check`;
+- Part 3 and the AM fixes: `tests/test_leftpage`, `test_amscan`, `test_ambulk`, `test_bulk`, `test_bulk_data`, and `bench/bench_index check`.
+
+If the data file is missing, the tests that need it (`test_hf_load`, `test_bulk_data`) print `SKIPPED`, `make test` adds a `NOTE ... skipped` line, and they still pass.
 
 # Run
 
-TODO: Document the available programs and benchmark commands.
+| Command | What it does | Output |
+|---|---|---|
+| `make bench` | Part 1 benchmark: LRU and MRU over all pool sizes, access patterns and read percentages in `toydb.conf` (about 6 s) | `results/bench_buffer.csv` |
+| `make bench-space` | Part 2: loads the student table into the slotted file and into a static file for every length in `static_lengths`, plus a delete/reinsert experiment (about 3 s) | `results/bench_space.csv` |
+| `make bench-index` | Part 3: builds the roll-number index three ways and runs the same point, missing-key, range and full-scan queries on each, `repeats` times (about 10 s) | `results/bench_index.csv` |
+| `make plots` | Part 1 figures and summary table (run `make bench` first), and Part 3 figures and summary table if `results/bench_index.csv` exists | `results/buffer_*.pdf`, `.png`, `buffer_summary.csv`, `.tex`; `results/index_*.pdf`, `.png`, `index_summary.csv`, `.tex` |
+| `make stress` | Randomized test of the buffer manager against an independent model, 20 seeds (not part of `make test`) | pass/fail per seed |
+| `make test CONF_MODE=exact` | As `make test`, but also checks every `toydb.conf` value against its documented default | |
+
+The programs can also be run directly from this directory. Each one reads `toydb.conf`, and any key can be overridden on the command line as `key=value`:
+
+```
+bench/bench_buffer [conf=FILE] [key=value ...] [check]
+bench/bench_space  [conf=FILE] [key=value ...] [check]
+bench/bench_index  [conf=FILE] [key=value ...] [check]
+tests/stress_pool  [seed] [nops]
+python3 scripts/plot_buffer.py [csv] [outdir] [--pool N] [--conf FILE]
+python3 scripts/plot_index.py  [csv] [outdir]
+```
+
+For example, `bench/bench_buffer buf_pool_sizes=10,40 repeats=1 > /tmp/b.csv` runs a smaller Part 1 experiment. The argument `check` runs a program's fast self-test with fixed, hand-computed fixtures; `make test` runs it.
+
+The `make bench*` targets write their CSV through a temporary file, so a failed run leaves the previous results in place.
 
 # Configuration (toydb.conf)
 
-TODO: Describe configuration keys, defaults, and command-line overrides.
+All tunables are in `toydb.conf`, a `key = value` file; everything after `#` on a line is a comment. A program finds it through a `conf=FILE` argument, then the `TOYDB_CONF` environment variable, then `./toydb.conf`. A missing key falls back to the default built into the program, which is the value below for every key except `buffer_pool_size` (built-in default 20).
+
+Any of these values can be changed without touching the code; `make test` passes for any valid configuration.
+
+| Key | Value in toydb.conf | Meaning |
+|---|---|---|
+| `buffer_pool_size` | 50 | Frames in the buffer pool (minimum 8); also the pool of the Part 3 benchmark |
+| `default_policy` | LRU | Policy for files opened with `PF_OpenFile`: LRU or MRU |
+| `data_file` | ../data/student.txt | Student data file |
+| `work_dir` | /tmp/toydb_run | Directory for benchmark scratch files |
+| `seed` | 42 | Base seed of all random choices |
+| `repeats` | 5 | Repeats of each configuration (Parts 1 and 3) |
+| `buf_file_pages` | 1000 | Pages in the Part 1 benchmark file |
+| `buf_queries` | 10000 | Operations per Part 1 run |
+| `buf_pool_sizes` | 20,50,100,900,1200 | Pool sizes measured |
+| `buf_read_pcts` | 100,90,75,50,25,10,0 | Read percentages measured (the x axis of the graphs) |
+| `buf_patterns` | uniform,hotcold,sequential | Access patterns measured |
+| `hot_fraction`, `hot_prob` | 0.2, 0.8 | Hot/cold pattern: size of the hot set and share of accesses to it |
+| `plot_pool`, `plot_read_pct` | 100, 50 | Pool used by the read/write-mix figures, and read percentage of the summary table |
+| `static_lengths` | 100,104,110,128,160,200,256 | Static record lengths compared in Part 2 (each 1 to 1024) |
+| `churn_fraction` | 0.3 | Share of records deleted and reinserted in Part 2 (0 to 1) |
+| `bulk_fill_factor` | 1.0 | Leaf and internal-node fill factor of the bulk loader (Part 3), in (0, 1] |
+| `idx_point_queries`, `idx_missing_queries` | 1000, 100 | Part 3 point queries on existing and absent keys |
+| `idx_range_queries`, `idx_range_len` | 200, 100 | Part 3 range queries and keys per range |
 
 # Part 1 buffer manager
-
-TODO: Describe the buffer-manager experiment and reported metrics.
 
 ## Buffer manager
 
@@ -398,8 +472,30 @@ with the same ID, so a row can be traced to the lines it describes.
 
 # Results
 
-TODO: Add measured tables, plots, and discussion.
+Measured results for Part 2 and Part 3 are in their sections above. All results, including the Part 1 figures and summary table, are in `results/` and are regenerated with `make bench`, `make bench-space`, `make bench-index` and then `make plots`.
+
+| File(s) | Part | Contents |
+|---|---|---|
+| `bench_buffer.csv` | 1 | One row per policy, pattern, pool size, read percentage and repeat |
+| `buffer_hit_ratio`, `buffer_io_vs_mix`, `buffer_io_breakdown` (`.pdf`, `.png`) | 1 | Figures described in [Buffer plots](#buffer-plots) |
+| `buffer_summary.csv`, `buffer_summary.tex` | 1 | Summary table at `plot_pool` and `plot_read_pct` |
+| `bench_space.csv` | 2 | Full-load and churn rows for the slotted and every static layout |
+| `bench_index.csv` | 3 | One row per method, repeat and phase |
+| `index_build`, `index_queries` (`.pdf`, `.png`) | 3 | Build cost and per-query cost of the three methods |
+| `index_summary.csv`, `index_summary.tex` | 3 | Per-method summary table |
 
 # Repository layout
 
-TODO: Describe the purpose of each source, header, configuration, and results directory.
+| Path | Contents |
+|---|---|
+| `pflayer/` | Provided PF layer, extended: runtime pool, per-file policy, `PF_MarkDirty`, statistics |
+| `amlayer/` | Provided AM (B+ tree) layer, with the scan fixes A1 and A3 to A7 and the bulk loader `ambulk.c` (A2); provided tests `test1` to `test3`, `amtest` |
+| `common/` | Configuration parser (`config.c`, `config.h`) |
+| `hf/` | Heap files: slotted pages (`hf.c`, `hfpage.c`) and the static layout (`hfstatic.c`); interface in `hf.h` |
+| `bench/` | Benchmarks: `bench_buffer.c` (Part 1), `bench_space.c` (Part 2), `bench_index.c` (Part 3) |
+| `scripts/` | `plot_buffer.py` (Part 1) and `plot_index.py` (Part 3): figures and tables |
+| `tests/` | Test programs run by `make test`, and `stress_pool.c` (`make stress`) |
+| `results/` | CSV files, figures and tables produced by the benchmarks |
+| `docs/` | `DECISIONS.md` (design decisions and requirement coverage), `PLAN.md` (design plan), `pf.ps` and `am.ps` (provided documentation) |
+| `toydb.conf` | All configuration |
+| `Makefile` | Build, test and benchmark targets |
