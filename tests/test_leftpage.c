@@ -1,5 +1,5 @@
-/* test_leftpage.c: the scans that start at the leftmost leaf (A1) and the
- * NOT_EQUAL scan (A3)
+/* test_leftpage.c: the scans that start at the leftmost leaf (A1), the
+ * NOT_EQUAL scan (A3) and the scans at leaf boundaries (A4-A7)
  *
  * usage: test_leftpage
  *
@@ -7,8 +7,12 @@
  * scans at the leftmost leaf, which it gets from GetLeftPageNum() in
  * amscan.c. This test builds B+ trees of different page layouts and checks
  * GetLeftPageNum() and every scan operator against the keys that were put
- * in. S4 and S5 check that a NE scan skips its value (all of its record
- * ids) wherever that key sits in the tree.
+ * in. In S0-S3 every operator is run on the minimum, the maximum, a value
+ * below and one above, a middle key, and for every leaf its first key,
+ * its last key and the gap value after its last key (key + 5), which for
+ * a leaf with a next leaf lies between the two leaves. S4 and S5 check
+ * that a NE scan skips its value (all of its record ids) wherever that key
+ * sits in the tree.
  *
  *   S0  built with AM_InsertEntry only (3000 int keys, scrambled order).
  *       Here the leftmost leaf is page 2: the first root split puts the
@@ -83,6 +87,7 @@ extern int AM_OpenIndexScan(int fileDesc, int attrType, int attrLength,
 extern int AM_FindNextEntry(int scanDesc);
 extern int AM_CloseIndexScan(int scanDesc);
 extern int GetLeftPageNum(int fileDesc);
+extern int AM_EmptyStack();
 /* AM page helpers (aminsert.c, am.c) */
 extern int AM_InsertintoLeaf(char *pageBuf, int attrLength, char *value,
 			     int recId, int index, int status);
@@ -194,6 +199,7 @@ SPECIFICATIONS:
 	memset(seen, 0, sizeof(seen));
 	sd = AM_OpenIndexScan(fd, 'i', KEYLEN, op,
 			      op == ALL ? NULL : (char *)&value);
+	AM_EmptyStack();	/* AM_Search pushes the path; the stack is 50 deep */
 	CHECK(sd >= 0);
 	if (sd < 0) {
 		printf("%s %s %d: AM_OpenIndexScan failed (%d)\n", sc,
@@ -266,20 +272,62 @@ SPECIFICATIONS:
 	CHECK(AM_CloseIndexScan(sd) == AME_OK);
 }
 
-static void
-check_all_scans(const char *sc, int fd)
-/* Every operator, with a value in the middle of the key range that is
-   itself a key (so EQ finds it and NE must skip it). */
-{
-	int v = key_of[rid_by_pos[nkeys / 2]];
+#define MAXVALS		200	/* most probe values in check_all_scans */
 
-	check_scan(sc, fd, ALL, 0);
+static void
+check_value(const char *sc, int fd, int v)
+/* Every operator but the full scan with value v. */
+{
 	check_scan(sc, fd, LESS_THAN, v);
 	check_scan(sc, fd, LESS_THAN_EQUAL, v);
 	check_scan(sc, fd, NOT_EQUAL, v);
 	check_scan(sc, fd, EQUAL, v);
 	check_scan(sc, fd, GREATER_THAN, v);
 	check_scan(sc, fd, GREATER_THAN_EQUAL, v);
+}
+
+static void
+check_all_scans(const char *sc, int fd)
+/****************************************************************************
+SPECIFICATIONS:
+	The full scan, then every other operator with these values: a
+	middle key, one below the minimum, one above the maximum, and for
+	each leaf (following the chain from GetLeftPageNum) its first key,
+	its last key and its last key + 5. Keys are multiples of 10, so
+	the +5 value is absent; for a leaf with a next leaf it lies in the
+	gap between the two leaves. The first leaf's first key is the
+	minimum and the last leaf's last key the maximum.
+*****************************************************************************/
+{
+	AM_LEAFHEADER h;
+	char *buf;
+	int vals[MAXVALS];
+	int n, i, page, k;
+
+	n = 0;
+	vals[n++] = key_of[rid_by_pos[nkeys / 2]];
+	vals[n++] = key_of[rid_by_pos[0]] - 5;
+	vals[n++] = key_of[rid_by_pos[nkeys - 1]] + 5;
+	page = GetLeftPageNum(fd);
+	while (page != AM_NULL_PAGE && n + 3 <= MAXVALS) {
+		CHECK(PF_GetThisPage(fd, page, &buf) == PFE_OK);
+		memcpy(&h, buf, sizeof(h));
+		if (h.numKeys > 0) {
+			memcpy(&k, buf + AM_sl, sizeof(k));
+			vals[n++] = k;
+			memcpy(&k, buf + AM_sl + (h.numKeys - 1) *
+			       (KEYLEN + AM_ss), sizeof(k));
+			vals[n++] = k;
+			vals[n++] = k + 5;
+		}
+		CHECK(PF_UnfixPage(fd, page, FALSE) == PFE_OK);
+		page = h.nextLeafPage;
+	}
+	CHECK(page == AM_NULL_PAGE);	/* MAXVALS was big enough */
+
+	check_scan(sc, fd, ALL, 0);
+	for (i = 0; i < n; i++)
+		check_value(sc, fd, vals[i]);
 }
 
 /* ---------------- building the trees ---------------- */
