@@ -30,6 +30,7 @@ bench_buffer
 bench/bench_buffer
 bench_space
 bench_index
+bench/bench_index
 /data/
 /results/tmp/
 CLAUDE.local.md
