@@ -197,6 +197,8 @@ def grouped_bars(ax, groups, cats, labels):
 def fmt_num(v):
     if v == 0:
         return "0"
+    if float(v).is_integer():
+        return "%d" % int(v)
     if v >= 100:
         return "%.0f" % v
     if v >= 10:
