@@ -127,7 +127,7 @@ Because an evaluator may edit the configuration and then run the tests, \texttt{
 Program & What it checks \\
 \midrule
 \texttt{amlayer/test1..3}, \texttt{amtest}, \texttt{pflayer/testpf} & The provided regression tests, unchanged. \\
-\texttt{test\_config} & Parser, lookup order, overrides; every key of \texttt{toydb.conf} parses. \\
+\texttt{test\_config} & Parser, lookup order, overrides; every key of \texttt{toydb.conf} parses; malformed values are rejected. \\
 \texttt{test\_pool} & Runtime pool sizing, minimum size, resizing only while the pool is empty. \\
 \texttt{test\_policy} & Exact LRU and MRU victim order, per-file policies sharing one pool. \\
 \texttt{test\_dirty} & \texttt{PF\_MarkDirty}, write-back on eviction and close, loss of unmarked changes. \\
@@ -147,6 +147,8 @@ Program & What it checks \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+Before submission the complete repository was checked once more, in a fresh clone, by an audit independent of the tests above. The code builds without warnings at \texttt{-O0}, \texttt{-O1} and \texttt{-O2}, and all 23 programs of \texttt{make test} pass both under AddressSanitizer and UndefinedBehaviorSanitizer, with no leaks, and under valgrind, with no invalid reads or writes. The only valgrind reports are uninitialised padding bytes of stack structures that the provided \texttt{AM\_CreateIndex} and \texttt{AM\_SplitLeaf} copy into index pages; these bytes are never read back, so the provided code was left unchanged. Every valid configuration tried (pool sizes from the minimum of 8 to 100{,}000 frames, both policies, fill factors from 0.01 to 1.0, absolute and relative data paths, a path containing a space) passes \texttt{make test}, and every invalid value stops the program with status 1 and names the key. Seventeen edge-case data files (empty, header only, LF line endings, no final newline, wrong field counts, an over-long record, sorted and reverse-sorted keys, one record, exactly one full leaf, and one key repeated up to 700 times) run through the four data programs without a crash, a hang or a wrong count, the last case with a clear error once a key exceeds 677 record ids. Rerunning all three benchmarks reproduces every page and I/O count of the committed results, and the packaged archive builds and passes its tests with and without the data file.
 
 % ---------------------------------------------------------------------
 \subsection{Experimental setup}
