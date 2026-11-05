@@ -227,9 +227,10 @@ HF_Insert(int fd, char *rec, int len)
 	page_number = 0;
 	slot = HF_PAGE_NOSPACE;
 	/*
-	 * Before deletes, the last page was sufficient because earlier pages
-	 * could not gain space.  Deletes can free any page, so inspect each
-	 * existing page and reuse the first one with enough contiguous space.
+	 * First fit over every data page: a delete can free space on any page,
+	 * so the last page is not the only candidate.  This scan is the heap
+	 * cost seen in the Part 3 incremental build; a free-space map would
+	 * avoid this scan (see the report's Limitations section).
 	 */
 	for (page_number = 1; page_number <= data_pages; page_number++) {
 		error = PF_GetThisPage(fd, page_number, &data_page);
@@ -424,6 +425,11 @@ HF_ScanNext(int scanfd, char *buf, int *len, int *rid)
 		error = PF_GetThisPage(scan->fd, scan->page, &data_page);
 		if (error != PFE_OK)
 			return HFE_PF;
+		/*
+		 * A deleted slot and a slot past the end both come back from
+		 * HFPage_Read as HFE_NOTFOUND, so try every slot a RID can hold
+		 * instead of stopping at the first miss.
+		 */
 		while (scan->slot < HF_RID_STRIDE) {
 			result = HFPage_Read((unsigned char *)data_page, scan->slot,
 					     buf, len);

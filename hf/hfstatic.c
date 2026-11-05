@@ -33,6 +33,15 @@
 #define HF_STATIC_LEN_MASK 0x7fffU
 #define HF_STATIC_EMPTY 0xffffU
 
+/* Byte offsets of the header page 0 fields described above. */
+#define HF_STATIC_MAGIC_OFFSET       0
+#define HF_STATIC_VERSION_OFFSET     4
+#define HF_STATIC_RECLEN_OFFSET      8
+#define HF_STATIC_DATA_PAGES_OFFSET 12
+#define HF_STATIC_RECORDS_OFFSET    16
+#define HF_STATIC_TRUNCATED_OFFSET  20
+#define HF_STATIC_BYTES_OFFSET      24
+
 extern int PF_CreateFile(char *fname);
 extern int PF_DestroyFile(char *fname);
 extern int PF_OpenFile(char *fname);
@@ -149,14 +158,15 @@ static_read_header(const char *page, int *record_length, long *data_pages,
 	unsigned long cuts;
 	unsigned long bytes;
 
-	if (static_get_u32(page) != HF_STATIC_MAGIC ||
-	    static_get_u32(page + 4) != HF_STATIC_VERSION)
+	if (static_get_u32(page + HF_STATIC_MAGIC_OFFSET) != HF_STATIC_MAGIC ||
+	    static_get_u32(page + HF_STATIC_VERSION_OFFSET) !=
+	    HF_STATIC_VERSION)
 		return HFE_PF;
-	*record_length = (int)static_get_u32(page + 8);
-	pages = static_get_u32(page + 12);
-	live = static_get_u32(page + 16);
-	cuts = static_get_u32(page + 20);
-	bytes = static_get_u32(page + 24);
+	*record_length = (int)static_get_u32(page + HF_STATIC_RECLEN_OFFSET);
+	pages = static_get_u32(page + HF_STATIC_DATA_PAGES_OFFSET);
+	live = static_get_u32(page + HF_STATIC_RECORDS_OFFSET);
+	cuts = static_get_u32(page + HF_STATIC_TRUNCATED_OFFSET);
+	bytes = static_get_u32(page + HF_STATIC_BYTES_OFFSET);
 	if (!static_valid_length(*record_length) ||
 	    pages > 0x7fffffffUL || live > 0x7fffffffUL ||
 	    cuts > 0x7fffffffUL || bytes > 0x7fffffffUL)
@@ -172,13 +182,17 @@ static void
 static_write_header(char *page, int record_length, long data_pages,
 		    long records, long truncated, long stored_bytes)
 {
-	static_put_u32(page, HF_STATIC_MAGIC);
-	static_put_u32(page + 4, HF_STATIC_VERSION);
-	static_put_u32(page + 8, (unsigned long)record_length);
-	static_put_u32(page + 12, (unsigned long)data_pages);
-	static_put_u32(page + 16, (unsigned long)records);
-	static_put_u32(page + 20, (unsigned long)truncated);
-	static_put_u32(page + 24, (unsigned long)stored_bytes);
+	static_put_u32(page + HF_STATIC_MAGIC_OFFSET, HF_STATIC_MAGIC);
+	static_put_u32(page + HF_STATIC_VERSION_OFFSET, HF_STATIC_VERSION);
+	static_put_u32(page + HF_STATIC_RECLEN_OFFSET,
+		       (unsigned long)record_length);
+	static_put_u32(page + HF_STATIC_DATA_PAGES_OFFSET,
+		       (unsigned long)data_pages);
+	static_put_u32(page + HF_STATIC_RECORDS_OFFSET, (unsigned long)records);
+	static_put_u32(page + HF_STATIC_TRUNCATED_OFFSET,
+		       (unsigned long)truncated);
+	static_put_u32(page + HF_STATIC_BYTES_OFFSET,
+		       (unsigned long)stored_bytes);
 }
 
 static int
