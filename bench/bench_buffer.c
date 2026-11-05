@@ -593,6 +593,18 @@ bench_mode(void)
 			"buf_queries >= 0, repeats >= 1\n");
 		return 1;
 	}
+	/* hot_fraction in (0, 1], hot_prob in [0, 1] (the run clamps the hot
+	   set to at least one hot and one cold page) */
+	if (!(r.hot_fraction > 0.0 && r.hot_fraction <= 1.0)) {
+		fprintf(stderr, "config: hot_fraction: %s out of range (0, 1]\n",
+			Config_GetStr("hot_fraction", ""));
+		return 1;
+	}
+	if (!(r.hot_prob >= 0.0 && r.hot_prob <= 1.0)) {
+		fprintf(stderr, "config: hot_prob: %s out of range [0, 1]\n",
+			Config_GetStr("hot_prob", ""));
+		return 1;
+	}
 	for (ci = 0; ci < npcts; ci++)
 		if (pcts[ci] < 0 || pcts[ci] > 100) {
 			fprintf(stderr, "bench_buffer: buf_read_pcts value %d "

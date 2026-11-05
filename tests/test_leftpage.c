@@ -524,7 +524,7 @@ s23(int no, int internal_first)
 {
 	int leaf[6], inner[2], c[3], mk[3], top[2], topmin[2];
 	int fd, i, j, firstleaf;
-	char sc[4];
+	char sc[16];	/* "S" + any int (up to 11 chars) + NUL */
 
 	sprintf(sc, "S%d", no);
 	fd = open_new_index(no);

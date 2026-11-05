@@ -12,6 +12,8 @@ Every change to the provided PF and AM code is marked in the source with `/* CHA
 
 Requirements: gcc and GNU make. `make plots` also needs Python 3 with matplotlib (`sudo apt install python3-matplotlib` or `pip install matplotlib`).
 
+The build is tested with gcc 15.2. clang 20 rejects the provided `amlayer/amprint.c` (`-Wreturn-mismatch` is an error in clang), so use gcc.
+
 The student data is not part of the repository. Extract the assignment's `data.tar.gz` next to this directory, so that the configured path `../data/student.txt` resolves:
 
 ```
@@ -45,7 +47,7 @@ If the data file is missing, the tests that need it (`test_hf_load`, `test_bulk_
 | `make bench-space` | Part 2: loads the student table into the slotted file and into a static file for every length in `static_lengths`, plus a delete/reinsert experiment (about 3 s) | `results/bench_space.csv` |
 | `make bench-index` | Part 3: builds the roll-number index three ways and runs the same point, missing-key, range and full-scan queries on each, `repeats` times (about 10 s) | `results/bench_index.csv` |
 | `make plots` | Part 1 figures and summary table (run `make bench` first), and Part 3 figures and summary table if `results/bench_index.csv` exists | `results/buffer_*.pdf`, `.png`, `buffer_summary.csv`, `.tex`; `results/index_*.pdf`, `.png`, `index_summary.csv`, `.tex` |
-| `make stress` | Randomized test of the buffer manager against an independent model, 20 seeds (not part of `make test`) | pass/fail per seed |
+| `make stress` | Builds `tests/stress_pool` and runs it for 20 seeds: a randomized test of the buffer manager against an independent model (not part of `make test`) | pass/fail per seed |
 | `make test CONF_MODE=exact` | As `make test`, but also checks every `toydb.conf` value against its documented default | |
 
 The programs can also be run directly from this directory. Each one reads `toydb.conf`, and any key can be overridden on the command line as `key=value`:
@@ -54,7 +56,7 @@ The programs can also be run directly from this directory. Each one reads `toydb
 bench/bench_buffer [conf=FILE] [key=value ...] [check]
 bench/bench_space  [conf=FILE] [key=value ...] [check]
 bench/bench_index  [conf=FILE] [key=value ...] [check]
-tests/stress_pool  [seed] [nops]
+tests/stress_pool  [seed] [nops]      (built by make stress)
 python3 scripts/plot_buffer.py [csv] [outdir] [--pool N] [--conf FILE]
 python3 scripts/plot_index.py  [csv] [outdir]
 ```
@@ -67,7 +69,7 @@ The `make bench*` targets write their CSV through a temporary file, so a failed 
 
 All tunables are in `toydb.conf`, a `key = value` file; everything after `#` on a line is a comment. A program finds it through a `conf=FILE` argument, then the `TOYDB_CONF` environment variable, then `./toydb.conf`. A missing key falls back to the default built into the program, which is the value below for every key except `buffer_pool_size` (built-in default 20).
 
-Any of these values can be changed without touching the code; `make test` passes for any valid configuration.
+Any of these values can be changed without touching the code; `make test` passes for any valid configuration. Any value that does not parse or is out of range stops the program with status 1 and names the key.
 
 | Key | Value in toydb.conf | Meaning |
 |---|---|---|
@@ -82,7 +84,7 @@ Any of these values can be changed without touching the code; `make test` passes
 | `buf_pool_sizes` | 20,50,100,900,1200 | Pool sizes measured |
 | `buf_read_pcts` | 100,90,75,50,25,10,0 | Read percentages measured (the x axis of the graphs) |
 | `buf_patterns` | uniform,hotcold,sequential | Access patterns measured |
-| `hot_fraction`, `hot_prob` | 0.2, 0.8 | Hot/cold pattern: size of the hot set and share of accesses to it |
+| `hot_fraction`, `hot_prob` | 0.2, 0.8 | Hot/cold pattern: size of the hot set, in (0, 1], and share of accesses to it, in [0, 1] |
 | `plot_pool`, `plot_read_pct` | 100, 50 | Pool used by the read/write-mix figures, and read percentage of the summary table |
 | `static_lengths` | 100,104,110,128,160,200,256 | Static record lengths compared in Part 2 (each 1 to 1024) |
 | `churn_fraction` | 0.3 | Share of records deleted and reinserted in Part 2 (0 to 1) |
@@ -492,7 +494,7 @@ with the same ID, so a row can be traced to the lines it describes.
 |----|---------|--------------|--------|-------------------------|
 | B1 | `Makefile` (new, top level) | One top-level Makefile replaces the per-folder builds. Provided sources are compiled with `-std=gnu89 -w`, new code with `-std=gnu89 -Wall -Wextra`. `make test` runs every test program in a scratch directory and checks its final line. `make clean` removes the shipped object files and binaries. | The provided sources are pre-ANSI C (implicit `int`, K&R function definitions, calls to undeclared functions), and the shipped objects were built by an old toolchain. | The shipped binaries and per-folder builds do not build on a current gcc. Under the default C23 mode of gcc 15.2, `pflayer/buf.c` fails with 32 errors, `pflayer/pf.c` with 47 and `pflayer/hash.c` with 19 (mostly implicit `int`, and calls to functions declared with an empty parameter list, which C23 reads as taking no arguments); with `-std=gnu89` they compile. |
 | B2 | `amlayer/pf.h` (deleted), `pflayer/pf.h`, `Makefile` | The private copy of `pf.h` in `amlayer/` is removed, so the AM sources include the single `pflayer/pf.h`. `PF_PAGE_SIZE` is 4096 and can be overridden with `-DPF_PAGE_SIZE=`. | The two headers disagreed on the page size (1020 bytes in `amlayer/`, 4096 in `pflayer/`). | The stale amlayer copy had a 1020-byte page size, so B+ tree nodes used about a quarter of each 4096-byte page and Part 3 page counts would be roughly four times too high. |
-| P1 | `pflayer/pftypes.h`, `pflayer/buf.c`, `pflayer/pf.c`, `pflayer/pf.h` | The compile-time constant `PF_MAX_BUFS` is replaced by a pool allocated at runtime. `PF_Init` sizes it from `buffer_pool_size` in `toydb.conf` (default 20), and the new `PF_InitBuffer(n)` resizes it while no page is in the buffer. New error codes `PFE_INVALIDBUFS` and `PFE_BUFINUSE`. | The assignment requires a configurable buffer pool size. | Every pool-size experiment needs a recompile, which the rule that only the configuration file may change after submission forbids. |
+| P1 | `pflayer/pftypes.h`, `pflayer/buf.c`, `pflayer/pf.c`, `pflayer/pf.h` | The compile-time constant `PF_MAX_BUFS` is replaced by a pool allocated (zeroed) at runtime. `PF_Init` sizes it from `buffer_pool_size` in `toydb.conf` (default 20), and the new `PF_InitBuffer(n)` resizes it while no page is in the buffer. New error codes `PFE_INVALIDBUFS` and `PFE_BUFINUSE`. | The assignment requires a configurable buffer pool size. | Every pool-size experiment needs a recompile, which the rule that only the configuration file may change after submission forbids. |
 | P2 | `pflayer/pftypes.h` | `PF_HASH_TBL_SIZE` is raised from 20 to 1031, a prime. | Pools of 50 to 100 frames are used in the experiments. | With 50 to 100 frames, 20 buckets give long chains and add lookup cost to every measurement. |
 | P3 | `pflayer/pftypes.h`, `pflayer/pf.c`, `pflayer/buf.c`, `pflayer/pf.h` | Each open-file entry records a replacement policy. The new `PF_OpenFileEx(fname, policy)` sets it, and victim selection searches from the tail for LRU and from the head for MRU, according to the policy of the file whose page is being loaded. New error code `PFE_INVALIDPOLICY`. | The assignment requires LRU and MRU to be selectable when a file is opened. | LRU and MRU cannot be chosen when a file is opened. |
 | P4 | `pflayer/pf.c`, `pflayer/pf.h` | `PF_OpenFile` is kept as a wrapper around `PF_OpenFileEx` that uses `default_policy` from `toydb.conf` (default LRU). | Backward compatibility with existing callers. | Every AM caller and provided test would need editing. |

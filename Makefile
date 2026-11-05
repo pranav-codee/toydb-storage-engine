@@ -95,7 +95,7 @@ common/%.o: common/%.c $(COMMON_HDRS)
 hf/hfpage.o: hf/hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
-hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
+hf/hf.o: hf/hf.c hf/hf.h hf/hfinternal.h hf/hfpage.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 
 hf/hfstatic.o: hf/hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
@@ -106,25 +106,25 @@ tests/%.o: tests/%.c $(COMMON_HDRS)
 
 tests/test_hfpage.o: tests/test_hfpage.c hf/hfpage.h hf/hf.h $(PF)/pf.h
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
-tests/test_hf.o: tests/test_hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h
+tests/test_hf.o: tests/test_hf.c hf/hf.h hf/hfinternal.h $(PF)/pf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 # am.h declares "extern char *malloc(), *calloc();" the K&R way, and gcc
 # warns that this does not match the built-ins. That warning, and only it,
 # is turned off for the one new file that includes am.h.
 tests/test_leftpage.o: tests/test_leftpage.c $(AM_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) -c $< -o $@
-tests/test_ambulk.o: tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h
+tests/test_ambulk.o: tests/test_ambulk.c $(AM_HDRS) $(AM)/ambulk.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
-tests/test_bulk.o: tests/test_bulk.c $(AM_HDRS) $(AM)/ambulk.h
+tests/test_bulk.o: tests/test_bulk.c $(AM_HDRS) $(AM)/ambulk.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
-tests/test_amscan.o: tests/test_amscan.c $(AM_HDRS) $(AM)/ambulk.h
+tests/test_amscan.o: tests/test_amscan.c $(AM_HDRS) $(AM)/ambulk.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) -I$(PF) \
 		$(NEWINC) -c $< -o $@
-tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(COMMON_HDRS)
+tests/test_hf_load.o: tests/test_hf_load.c hf/hf.h $(PF)/pf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
-tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h
+tests/test_hfstatic.o: tests/test_hfstatic.c hf/hfstatic.h hf/hf.h $(PF)/pf.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) $(NEWINC) -Ihf -I$(PF) -c $< -o $@
 tests/test_pool.o: $(PF_HDRS)
 tests/test_policy.o: $(PF_HDRS)
@@ -199,7 +199,7 @@ tests/test_amscan: tests/test_amscan.o $(AM)/amlayer.o $(PF)/pflayer.o
 	$(CC) $(NEWFLAGS) -o $@ $^
 
 tests/test_bulk_data.o: tests/test_bulk_data.c hf/hf.h $(AM_HDRS) \
-		$(AM)/ambulk.h
+		$(AM)/ambulk.h $(COMMON_HDRS)
 	$(CC) $(NEWFLAGS) -Wno-builtin-declaration-mismatch -I$(AM) \
 		-I$(PF) -Ihf $(NEWINC) -c $< -o $@
 

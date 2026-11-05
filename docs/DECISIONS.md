@@ -2,7 +2,7 @@
 
 This file records every significant decision taken in this project: what was decided, why, and what would happen if it had not been done. Changes to the provided PF and AM code are listed in full, with their reasons and consequences, in the "Changes to provided code" table of README.md (rows B1, B2, P1 to P7, A1 to A7). This file references those rows rather than repeating them, and adds the decisions that are not code changes: build and test infrastructure, configuration, experiment design and measurement definitions.
 
-Each entry gives the decision, the reason, the consequence if it had not been taken, and where it lives (commit hash and file:line). Entries marked **(pending)** are not done yet. Pull requests are written PR n. Line numbers refer to the tree at commit 59153ad; the code has not changed since merge commit a7478f2 (PR 11).
+Each entry gives the decision, the reason, the consequence if it had not been taken, and where it lives (commit hash and file:line). Entries marked **(pending)** are not done yet. Pull requests are written PR n. Every file:line citation in this log was checked against the submitted main.
 
 Commit messages also use review-finding labels: F1 to F13 (Part 2 review), B1 to B10 and K1, K3 (bulk-loader review), and P1 to P4 (the scan bugs that review found, named after the probe groups of `tests/test_amscan`). These are not change IDs: the finding B1 is not README row B1, and the probe group P1 is not README row P1.
 
@@ -27,10 +27,10 @@ Commit messages also use review-finding labels: F1 to F13 (Part 2 review), B1 to
 | R15 | Index built incrementally through inserts | M2: `build_m2` (`bench/bench_index.c:679`), `HF_Insert` then `AM_InsertEntry` for each record (d7e4ea2) | bench_index check, results/bench_index.csv | Done |
 | R16 | Bulk-loading method for a pre-sorted file | `AM_BulkLoad` (`amlayer/ambulk.c:445`, A2; 7ba6de0, fixed in ef31977; PR 9), used by M3 `build_m3` (`bench/bench_index.c:812`), which sorts the pairs first and times the load alone | test_ambulk, test_bulk, test_bulk_data, bench_index check | Done |
 | R17 | Compare the three: query completion time, pages accessed | `run_batch` (`bench/bench_index.c:1192`): time and index logical and physical reads per query for point, missing-key, range and full-scan queries, plus build cost and tree size (d7e4ea2); `scripts/plot_index.py` (c25df58) | results/bench_index.csv, results/index_*, README Part 3 results | Done |
-| S1 | Code follows programming etiquette, commented | all new code; `CHANGED [Xn]` markers in provided code | review | Ongoing |
+| S1 | Code follows programming etiquette, commented | all new code; `CHANGED [Xn]` markers in provided code | review | Done |
 | S2 | README: description, detailed compile and run steps | README.md: Overview, Build, Run, Configuration, Results and layout (d4dc6b6), Part 1 results (59153ad) | review | Done |
-| S3 | Submission as rollno1-rollno2.tar.gz | final packaging | | **(pending)** |
-| S4 | No code changes after submission, only the config file | all tunables in toydb.conf (D3), tests independent of config values (D4) | test_config present_only, check modes | Done, keep checking |
+| S3 | Submission as rollno1-rollno2.tar.gz | `git archive` of main, checked in the pre-submission audit: 103 files, no build outputs or private files | `make && make test` on the extracted archive, with and without data | Done |
+| S4 | No code changes after submission, only the config file | all tunables in toydb.conf (D3), tests independent of config values (D4) | test_config present_only, check modes | Done |
 
 ## 2. Build, test and configuration infrastructure
 
@@ -215,7 +215,7 @@ Where: results/index_summary.csv; README Part 3 results.
 
 ## 6. Process
 
-**D30. Code changes are made on their own branch and merged into main through a pull request with a merge commit. Only the initial setup commits, documentation-only commits and the results commit (0a3e199, generated files only) are committed directly to main. Code changes are verified before merge by checks chosen for the change, such as a fresh clone, both config modes, sanitizers or an adversarial review.**
+**D30. Code changes are made on their own branch and merged into main through a pull request with a merge commit. Only the initial setup commits, documentation-only commits and the two results commits (0a3e199 and 8bbbc55, generated files only) are committed directly to main. Code changes are verified before merge by checks chosen for the change, such as a fresh clone, both config modes, sanitizers or an adversarial review.**
 Reason: a reviewable history, and no unverified code on main.
 Where: `git log --first-parent main`.
 

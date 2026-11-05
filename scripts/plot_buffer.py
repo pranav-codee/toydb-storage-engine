@@ -89,15 +89,15 @@ def read_conf(path):
 
 
 def conf_int(conf, key, default):
-    """Like Config_GetInt: the value, or default if missing or bad."""
+    """Like Config_GetInt: the value, or default if missing; exit 1 if bad."""
     if key not in conf:
         return default
     try:
         return int(conf[key])
     except ValueError:
-        print("%s: %s = %s is not an int, using %d"
-              % (PROG, key, conf[key], default), file=sys.stderr)
-        return default
+        print("config: %s: '%s' is not a valid number" % (key, conf[key]),
+              file=sys.stderr)
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------- data

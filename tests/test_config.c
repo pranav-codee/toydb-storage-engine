@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include "config.h"
 
 static int nfail = 0;		/* failed checks */
@@ -26,7 +28,7 @@ static int ncheck = 0;		/* all checks */
 		} \
 	} while (0)
 
-#define MAXTMP	32
+#define MAXTMP	64
 static char tmpnames[MAXTMP][32];	/* temp files to remove at the end */
 static int ntmp = 0;
 
@@ -67,6 +69,68 @@ RETURN VALUE:
 *****************************************************************************/
 {
 	return Config_Load(write_conf(text));
+}
+
+#define G_INT	0	/* the getter expect_exit calls */
+#define G_DBL	1
+#define G_ILIST	2
+#define G_SLIST	3
+
+static void expect_exit(const char *text, const char *key, int getter,
+			const char *want)
+/****************************************************************************
+SPECIFICATIONS:
+	Write "text" to a temp conf, then in a child process load it and
+	call the getter "getter" on "key". The value does not parse, so the
+	getter must print exactly the line "want" on stderr and exit with
+	status 1; if it returns, the child exits 0 and the check fails.
+	Counts as one check.
+*****************************************************************************/
+{
+	char msg[512];
+	char sv[4][CONFIG_VALLEN];
+	const char *name;
+	int v[4];
+	int fds[2], status, len;
+	pid_t pid;
+	ssize_t n;
+
+	ncheck++;
+	name = write_conf(text);
+	fflush(stdout);
+	fflush(stderr);
+	if (pipe(fds) != 0 || (pid = fork()) < 0) {
+		nfail++;
+		printf("FAILED expect_exit '%s': pipe or fork failed\n", key);
+		return;
+	}
+	if (pid == 0) {
+		close(fds[0]);
+		dup2(fds[1], 2);
+		Config_Load(name);
+		if (getter == G_INT)
+			(void)Config_GetInt(key, 0);
+		else if (getter == G_DBL)
+			(void)Config_GetDouble(key, 0.0);
+		else if (getter == G_ILIST)
+			(void)Config_GetIntList(key, v, 4, "1");
+		else
+			(void)Config_GetStrList(key, sv, 4, "x");
+		_exit(0);	/* the getter returned: wrong */
+	}
+	close(fds[1]);
+	len = 0;
+	while (len < (int)sizeof(msg) - 1 &&
+	       (n = read(fds[0], msg + len, sizeof(msg) - 1 - len)) > 0)
+		len += (int)n;
+	msg[len] = '\0';
+	close(fds[0]);
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+	    WEXITSTATUS(status) != 1 || strcmp(msg, want) != 0) {
+		nfail++;
+		printf("FAILED expect_exit '%s': exit %d, stderr \"%s\" (want exit 1, \"%s\")\n",
+		       key, WIFEXITED(status) ? WEXITSTATUS(status) : -1, msg, want);
+	}
 }
 
 static void test_plain(void)
@@ -139,9 +203,11 @@ static void test_empty_value(void)
 	CHECK(Config_GetStr("e", NULL) != NULL);
 	CHECK(strcmp(Config_GetStr("e", "dflt"), "") == 0);
 	CHECK(strcmp(Config_GetStr("f", "dflt"), "") == 0);
-	CHECK(Config_GetInt("e", 7) == 7);
-	CHECK(Config_GetDouble("e", 1.5) == 1.5);
+	/* an empty value is an empty list, but not a number */
 	CHECK(Config_GetIntList("e", v, 4, "1,2") == 0);
+	expect_exit("e =\n", "e", G_INT, "config: e: '' is not a valid number\n");
+	expect_exit("e =   # only a comment\n", "e", G_DBL,
+		"config: e: '' is not a valid number\n");
 }
 
 static void test_getters(void)
@@ -176,15 +242,18 @@ static void test_missing_key(void)
 
 static void test_malformed(void)
 {
-	CHECK(load_text("i = 12abc\nj = 1.5\nbig = 99999999999\nsp = 1 2\n"
-		"d = abc\nd2 = 1.5x\n") == CONFIG_OK);
-	CHECK(Config_GetInt("i", -1) == -1);
-	CHECK(Config_GetInt("j", -1) == -1);
-	CHECK(Config_GetInt("big", -1) == -1);
-	CHECK(Config_GetInt("sp", -1) == -1);
-	CHECK(Config_GetDouble("d", -1.0) == -1.0);
-	CHECK(Config_GetDouble("d2", -1.0) == -1.0);
-	/* the raw string is still there */
+	/* a value that does not parse stops the program with status 1 */
+	expect_exit("n = abc\n", "n", G_INT, "config: n: 'abc' is not a valid number\n");
+	expect_exit("n = 12abc\n", "n", G_INT, "config: n: '12abc' is not a valid number\n");
+	expect_exit("n = 1.5\n", "n", G_INT, "config: n: '1.5' is not a valid number\n");
+	expect_exit("n = 1.5x\n", "n", G_INT, "config: n: '1.5x' is not a valid number\n");
+	expect_exit("n = 99999999999\n", "n", G_INT,
+		"config: n: '99999999999' is not a valid number\n");
+	expect_exit("n = 1 2\n", "n", G_INT, "config: n: '1 2' is not a valid number\n");
+	expect_exit("d = abc\n", "d", G_DBL, "config: d: 'abc' is not a valid number\n");
+	expect_exit("d = 1.5x\n", "d", G_DBL, "config: d: '1.5x' is not a valid number\n");
+	/* the same values can still be read as strings */
+	CHECK(load_text("i = 12abc\n") == CONFIG_OK);
 	CHECK(strcmp(Config_GetStr("i", ""), "12abc") == 0);
 }
 
@@ -196,12 +265,8 @@ static void test_lists(void)
 	CHECK(load_text("l = 20, 50,100\n"
 		"one = 7\n"
 		"s = uniform , hotcold,sequential\n"
-		"bad = 1,x,3\n"
-		"hole = 1,,3\n"
-		"trail = 1,2,\n"
 		"long = 1,2,3,4,5\n"
-		"slong = a,b,c\n"
-		"shole = a, ,c\n") == CONFIG_OK);
+		"slong = a,b,c\n") == CONFIG_OK);
 
 	CHECK(Config_GetIntList("l", v, 8, "0") == 3);
 	CHECK(v[0] == 20 && v[1] == 50 && v[2] == 100);
@@ -213,15 +278,13 @@ static void test_lists(void)
 	CHECK(strcmp(s[1], "hotcold") == 0);
 	CHECK(strcmp(s[2], "sequential") == 0);
 
-	/* a bad element falls back to the default list */
-	CHECK(Config_GetIntList("bad", v, 8, "7,8") == 2);
-	CHECK(v[0] == 7 && v[1] == 8);
-	CHECK(Config_GetIntList("hole", v, 8, "9") == 1);
-	CHECK(v[0] == 9);
-	CHECK(Config_GetIntList("trail", v, 8, "9") == 1);
-	CHECK(Config_GetIntList("bad", v, 8, NULL) == 0);
-	CHECK(Config_GetStrList("shole", s, 8, "d") == 1);
-	CHECK(strcmp(s[0], "d") == 0);
+	/* an empty or non-numeric element stops the program with status 1 */
+	expect_exit("l = 100,,abc\n", "l", G_ILIST,
+		"config: l: '100,,abc' is not a valid number\n");
+	expect_exit("l = 1,x,3\n", "l", G_ILIST, "config: l: '1,x,3' is not a valid number\n");
+	expect_exit("l = 1,2,\n", "l", G_ILIST, "config: l: '1,2,' is not a valid number\n");
+	expect_exit("l = 1.5x\n", "l", G_ILIST, "config: l: '1.5x' is not a valid number\n");
+	expect_exit("s = a, ,c\n", "s", G_SLIST, "config: s: 'a, ,c' is not a valid list\n");
 
 	/* too long: keep the first max values */
 	v[3] = -5;
