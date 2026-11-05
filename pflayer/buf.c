@@ -14,10 +14,10 @@ static int PFnumbpage = 0;	/* # of buffer pages in memory */
 static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
-/* CHANGED [P1]: all frames come from one malloc'd array of the configured size */
+/* CHANGED [P1]: all frames come from one calloc'd (zeroed) array of the configured size */
 static PFbpage *PFbufpool = NULL;	/* the frame array, or NULL before PFbufInit */
 
-extern char *malloc();
+extern char *calloc();
 
 static void PFbufInsertFree(bpage)
 PFbpage *bpage;
@@ -231,14 +231,14 @@ PFbufInit(n)
 int n;		/* number of frames in the pool */
 /****************************************************************************
 SPECIFICATIONS:
-	Allocate a pool of "n" buffer frames with a single malloc() and put
-	them all on the free list. The caller (PF_InitBuffer) checks that
+	Allocate a pool of "n" zeroed buffer frames with a single calloc()
+	and put them all on the free list. The caller (PF_InitBuffer) checks that
 	n >= PF_MIN_BUFS.
 	Can be called again to resize the pool, but only when no page is
 	in the buffer at all (all files closed). An unfixed page can still
 	be dirty and is still in the hash table, so it is not enough that
 	no page is fixed. On a valid re-init the old pool is freed. If the
-	new malloc() fails the old pool is kept unchanged.
+	new calloc() fails the old pool is kept unchanged.
 
 RETURN VALUE:
 	PFE_OK		if ok.
@@ -258,7 +258,7 @@ int i;
 		return(PFerrno);
 	}
 
-	if ((newpool=(PFbpage *)malloc((unsigned)n*sizeof(PFbpage)))==NULL){
+	if ((newpool=(PFbpage *)calloc((unsigned)n,sizeof(PFbpage)))==NULL){
 		PFerrno = PFE_NOMEM;
 		return(PFerrno);
 	}

@@ -74,8 +74,8 @@ SPECIFICATIONS:
 
 RETURN VALUE:
 	The value, or "def" if the key is missing. If the value is not a
-	whole int (or does not fit in one) a warning naming the key is
-	printed on stderr and "def" is returned.
+	whole int (or does not fit in one), "config: <key>: '<value>' is
+	not a valid number" is printed on stderr and the program exits 1.
 *****************************************************************************/
 
 double Config_GetDouble(const char *key, double def);
@@ -84,8 +84,8 @@ SPECIFICATIONS:
 	Value of "key" as a double (anything strtod takes).
 
 RETURN VALUE:
-	The value, or "def" if the key is missing. A malformed value gives a
-	warning naming the key and "def" is returned.
+	The value, or "def" if the key is missing. A malformed value prints
+	the same message as Config_GetInt and the program exits 1.
 *****************************************************************************/
 
 const char *Config_GetStr(const char *key, const char *def);
@@ -106,8 +106,8 @@ SPECIFICATIONS:
 	optional blanks around each element ("20, 50,100"), into out[0..].
 	If the key is missing, "def_csv" is parsed instead (NULL means an
 	empty list). An empty value gives an empty list.
-	A bad element (empty or not an int) gives a warning naming the key
-	and the whole list falls back to def_csv. A list longer than "max"
+	A bad element (empty or not an int) in the value prints the message
+	of Config_GetInt and the program exits 1. A list longer than "max"
 	gives a warning and only the first "max" values are kept.
 
 RETURN VALUE:
@@ -119,7 +119,7 @@ int Config_GetStrList(const char *key, char out[][CONFIG_VALLEN], int max,
 /****************************************************************************
 SPECIFICATIONS:
 	Same as Config_GetIntList but each element is kept as a string
-	(blanks around it removed). An empty element is a bad element.
+	(blanks around it removed). An empty element exits ("is not a valid list").
 
 RETURN VALUE:
 	The number of strings written to out.

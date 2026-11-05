@@ -47,6 +47,7 @@ main(int argc, char **argv)
 	long records;
 	int config_status;
 	char record[100];
+	char maxrec[HF_MAX_RECLEN];	/* source for the maximum-length insert */
 	int rids[40];
 	int i;
 	int j;
@@ -83,6 +84,7 @@ main(int argc, char **argv)
 	fd = HF_OpenFile(fname);
 	check(fd >= 0, "reopen");
 	memset(record, 'R', sizeof(record));
+	memset(maxrec, 'M', sizeof(maxrec));
 	for (i = 0; i < 40; i++) {
 		rids[i] = HF_Insert(fd, record, (int)sizeof(record));
 		check(rids[i] >= 0, "insert returns nonnegative rid");
@@ -96,7 +98,7 @@ main(int argc, char **argv)
 	check(extra_rids[0] >= 0, "zero-length insert");
 	extra_rids[1] = HF_Insert(fd, record, 1);
 	check(extra_rids[1] >= 0, "one-byte insert");
-	extra_rids[2] = HF_Insert(fd, record, HF_MAX_RECLEN);
+	extra_rids[2] = HF_Insert(fd, maxrec, HF_MAX_RECLEN);
 	check(extra_rids[2] >= 0, "maximum-length insert");
 	check(HF_Insert(fd, record, HF_MAX_RECLEN + 1) == HFE_TOOLONG,
 	      "record above maximum rejected");

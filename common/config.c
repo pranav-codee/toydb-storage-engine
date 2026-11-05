@@ -171,18 +171,34 @@ RETURN VALUE:
 	return 0;
 }
 
+static void cfg_bad(const char *key, const char *val, const char *what)
+/****************************************************************************
+SPECIFICATIONS:
+	A value from the file or the command line did not parse: print
+	"config: <key>: '<value>' is not <what>" on stderr and exit with
+	status 1, so a typo in toydb.conf can never run an experiment with
+	some other value.
+*****************************************************************************/
+{
+	fprintf(stderr, "config: %s: '%s' is not %s\n", key, val, what);
+	exit(1);
+}
+
 static int cfg_list(const char *key, const char *src, int isdef, int type,
 		int *iout, char sout[][CONFIG_VALLEN], int max)
 /****************************************************************************
 SPECIFICATIONS:
 	Parse the comma separated list "src" into iout (type CFG_INT) or
 	sout (type CFG_STR), at most "max" elements. "isdef" is only used
-	in warnings, to say whether src was the value or the default.
+	in messages, to say whether src was the value or the default.
 	An empty (or all blank) src is an empty list. A list longer than
 	max gives a warning and the first max elements are kept.
+	A bad element (empty, or not an int for CFG_INT) in the value of
+	the key is fatal: cfg_bad prints the key and value and exits 1.
 
 RETURN VALUE:
-	Number of elements stored, or -1 on a bad element (warning printed).
+	Number of elements stored, or -1 on a bad element of the default
+	(warning printed).
 *****************************************************************************/
 {
 	char elem[CONFIG_VALLEN];
@@ -216,9 +232,11 @@ RETURN VALUE:
 		elem[len] = '\0';
 		e = cfg_trim(elem);
 		if (*e == '\0' || (type == CFG_INT && cfg_toint(e, &v) < 0)) {
-			fprintf(stderr, "config: key '%s': bad %s element %d '%s'%s\n",
-				key, isdef ? "default" : "list", n + 1, e,
-				isdef ? "" : ", using the default list");
+			if (!isdef)
+				cfg_bad(key, src, type == CFG_INT ?
+					"a valid number" : "a valid list");
+			fprintf(stderr, "config: key '%s': bad default element %d '%s'\n",
+				key, n + 1, e);
 			return -1;
 		}
 		if (type == CFG_INT)
@@ -237,8 +255,8 @@ static int cfg_getlist(const char *key, int type, int *iout,
 /****************************************************************************
 SPECIFICATIONS:
 	Common part of Config_GetIntList and Config_GetStrList: use the
-	value of key if present, else def_csv; on a bad element in the value
-	fall back to def_csv.
+	value of key if present (a bad element there exits, see cfg_list),
+	else def_csv.
 
 RETURN VALUE:
 	Number of elements stored.
@@ -392,7 +410,8 @@ SPECIFICATIONS:
 	See config.h.
 
 RETURN VALUE:
-	The int value of key, or def.
+	The int value of key, or def if the key is missing (a bad value
+	exits, see cfg_bad).
 *****************************************************************************/
 {
 	int i, v;
@@ -400,11 +419,8 @@ RETURN VALUE:
 	i = cfg_find(key);
 	if (i < 0)
 		return def;
-	if (cfg_toint(cfg_tab[i].val, &v) < 0) {
-		fprintf(stderr, "config: key '%s': '%s' is not an int, using %d\n",
-			key, cfg_tab[i].val, def);
-		return def;
-	}
+	if (cfg_toint(cfg_tab[i].val, &v) < 0)
+		cfg_bad(key, cfg_tab[i].val, "a valid number");
 	return v;
 }
 
@@ -414,7 +430,8 @@ SPECIFICATIONS:
 	See config.h.
 
 RETURN VALUE:
-	The double value of key, or def.
+	The double value of key, or def if the key is missing (a bad value
+	exits, see cfg_bad).
 *****************************************************************************/
 {
 	char *end;
@@ -426,11 +443,8 @@ RETURN VALUE:
 		return def;
 	errno = 0;
 	v = strtod(cfg_tab[i].val, &end);
-	if (cfg_tab[i].val[0] == '\0' || *end != '\0' || errno == ERANGE) {
-		fprintf(stderr, "config: key '%s': '%s' is not a number, using %g\n",
-			key, cfg_tab[i].val, def);
-		return def;
-	}
+	if (cfg_tab[i].val[0] == '\0' || *end != '\0' || errno == ERANGE)
+		cfg_bad(key, cfg_tab[i].val, "a valid number");
 	return v;
 }
 
