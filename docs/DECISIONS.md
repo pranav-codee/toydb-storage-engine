@@ -127,7 +127,7 @@ Where: 13e8988; `hf/hf.h:18`, `hf/hf.h:29`, `hf/hf.c:212`; static layout since 2
 **D18. Utilization = useful bytes / (data pages × page size), for both layouts, with the header page excluded and useful bytes = the bytes of record content actually stored.**
 Reason: one definition for both layouts makes the comparison fair.
 If not done: comparing slot capacity with stored data inflates static utilization (finding F1: the first version reported 0.94 to 0.99 for static, which reversed the real result).
-Where: e473fd6 (definition), 2ae05a9 (static implementation); `hf/hf.h:42`, `hf/hfstatic.c:575`.
+Where: e473fd6 (definition), 2ae05a9 (static implementation); `hf/hf.h:42`, `hf/hfstatic.c:589`.
 
 **D19. A record is the content of one line, without its line terminator. The data file has CRLF line endings; the loader strips a trailing "\n" and then one trailing "\r". Lines without 16 semicolon-separated fields (the title line) and empty lines (the last line, which holds only "\r\n") are skipped. A line too long for the read buffer is rejected with its line number instead of being split.**
 Reason: the terminator is a file-format artifact, not data.
@@ -143,7 +143,7 @@ Where: cd0ef0c, 2ae05a9; `tests/test_hf_load.c:212`, `tests/test_hf_load.c:260`,
 Reason: to support variable-length records in fixed slots, the length must be stored somewhere; without it a short record reads back as L bytes, stored bytes cannot be known, and delete cannot update the statistics (findings F1, F2, F4).
 If not done: wrong utilization, a truncation count that grows across delete/reinsert, and records returned with padding.
 Result: slotted 452 pages, utilization 0.950; static utilization from 0.957 at L=100 (5,749 records truncated) down to 0.361 at L=256; slots per page 40, 38, 36, 31, 25, 20 and 15 for L = 100, 104, 110, 128, 160, 200 and 256.
-Where: 2ae05a9; `hf/hfstatic.c:23`, `hf/hfstatic.c:34`, `hf/hfstatic.c:452`.
+Where: 2ae05a9; `hf/hfstatic.c:23`, `hf/hfstatic.c:34`, `hf/hfstatic.c:466`.
 
 **D22. Static record lengths compared: 100, 104, 110, 128, 160, 200, 256 (`static_lengths`).** The longest record is 108 bytes, so 108 is the smallest length that stores every record whole. 100 and 104 are below it and show truncation (5,749 and 159 records); 110 is the smallest configured length without truncation; larger values show the growing waste.
 Where: `toydb.conf:28`.
@@ -172,7 +172,7 @@ Fill factor: f = `bulk_fill_factor`, in (0, 1]. A leaf takes floor(f × leaf cap
 Other rules: pages are built with the AM's own page functions; equal keys are one entry with a list of record ids that never spans two leaves (at most 677 rids per char(8) key, else `AME_INVALIDATTRLENGTH`); the input order is checked with `AM_Compare`, so int and float keys load in numeric order (`AME_INVALIDVALUE` otherwise); on any error no fixed page and no index file is left.
 Reason: the existing AM scan, search and insert code must work unchanged on a bulk-loaded tree, and the size comparison in Part 3 must count only reachable pages.
 If not done: an orphaned page inflates the M3 size; a leaf target taken from maxKeys does not fill leaves to f; an int key list loaded in byte order is not a valid B+ tree.
-Where: 7ba6de0, ef31977 (fixes B1 to B5, B7), b01082f (tests for findings B8 to B10, K1, K3); PR 9. `amlayer/ambulk.c:152` (`bulk_target`), `amlayer/ambulk.c:173` (`bulk_plan_leaves`), `amlayer/ambulk.c:509` (order check), `amlayer/ambulk.c:523` (rid limit), `amlayer/ambulk.c:557` (targets), `tests/test_bulk.c`.
+Where: 7ba6de0, ef31977 (fixes B1 to B5, B7), b01082f (tests for findings B8 to B10, K1, K3); PR 9. `amlayer/ambulk.c:152` (`bulk_target`), `amlayer/ambulk.c:173` (`bulk_plan_leaves`), `amlayer/ambulk.c:510` (order check), `amlayer/ambulk.c:524` (rid limit), `amlayer/ambulk.c:558` (targets), `tests/test_bulk.c`.
 
 **D28. Provided AM behaviour deliberately left unchanged:** no node merge on delete, 50/50 leaf split, a single global scan stack, the `bcopy` redefinition, and the unused debug helper `AM_DumpLeafPages`, which reads `pageNum` before setting it.
 Reason: none affects correctness here, and changing them would alter the baseline that bulk loading is compared against.

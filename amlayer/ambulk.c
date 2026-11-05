@@ -480,6 +480,7 @@ AM_BulkLoad(char *relName, int indexNo, char attrType, int attrLength,
 
 	factor = Config_GetDouble("bulk_fill_factor", 1.0);
 	if (relName == NULL || next == NULL ||
+	    /* room for "." plus indexNo (sign and up to 10 digits) plus NUL */
 	    strlen(relName) + 12 >= sizeof(index_name) ||
 	    (attrType != 'c' && attrType != 'i' && attrType != 'f') ||
 	    attrLength < 1 || attrLength > 255 ||
