@@ -452,11 +452,12 @@ main(int argc, char **argv)
 	}
 	seed = (unsigned long)Config_GetInt("seed", 42);
 	data_file = Config_GetStr("data_file", "../data/student.txt");
+	/* stdout is only the CSV, so make bench-space keeps the old one when
+	   the data is missing */
 	if (load_input(&records, &count, data_file) != 0) {
-		printf("bench_space: data file not found at %s, SKIPPED\n",
-		       data_file);
-		printf("bench_space done!\n");
-		return 0;
+		fprintf(stderr, "bench_space: data file not found at %s\n",
+			data_file);
+		exit(1);
 	}
 	printf("layout,L,records,truncated,data_pages,useful_bytes,"
 	       "records_per_page,utilization\n");
@@ -470,6 +471,6 @@ main(int argc, char **argv)
 		print_row("static_churn", lengths[i], &after);
 	}
 	free(records);
-	printf("bench_space done!\n");
+	fprintf(stderr, "bench_space done!\n");
 	return 0;
 }

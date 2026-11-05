@@ -289,7 +289,9 @@ make bench-space
 ```
 
 This writes `results/bench_space.csv` (through a temporary file, so a failed
-run leaves the previous CSV in place). Every value in `static_lengths` must be
+run leaves the previous CSV in place). If the data file is missing, the
+program says so on stderr and exits with status 1, so the run fails and the
+CSV is left unchanged. Every value in `static_lengths` must be
 in `1..HF_MAX_RECLEN` and `churn_fraction` in `0..1`; otherwise the program
 names the bad value and exits with status 1 before it prints or creates
 anything. `student.txt` has CRLF line endings, and `bench_space` strips them
